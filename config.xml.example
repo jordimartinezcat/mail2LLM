@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Plantilla de configuración para processMail.
+  Copia este archivo como config.xml en la raíz del proyecto y rellena los valores reales.
+  IMPORTANTE: config.xml está en .gitignore para proteger las credenciales.
+-->
+<config>
+  <email>
+    <!-- Servidor IMAP (ej: imap.gmail.com, outlook.office365.com) -->
+    <server>imap.example.com</server>
+    <!-- Puerto IMAP: 993 con SSL, 143 sin SSL -->
+    <port>993</port>
+    <!-- Dirección de correo electrónico -->
+    <username>usuario@example.com</username>
+    <!-- La contraseña sólo es necesaria para servidores con autenticación básica (no Outlook/Gmail) -->
+    <password></password>
+    <ssl>true</ssl>
+    <folder>INBOX</folder>
+    <!-- Para Outlook/Hotmail/Office 365: Application (client) ID del app registrada en Azure Portal.
+         Pasos: https://learn.microsoft.com/azure/active-directory/develop/quickstart-register-app
+         Permisos requeridos en la app: IMAP.AccessAsUser.All (tipo Delegado)
+         Tipo de cuenta: Cuentas en cualquier directorio org. y cuentas Microsoft personales
+         Redireccionamiento: Móvil y escritorio > https://login.microsoftonline.com/common/oauth2/nativeclient
+    -->
+    <oauth2_client_id>XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX</oauth2_client_id>
+    <!-- Ruta al fichero de caché de tokens (relativa a raíz del proyecto) -->
+    <oauth2_token_cache>token_cache.json</oauth2_token_cache>
+  </email>
+  <llm>
+    <!-- Proveedor LLM: lmstudio | ollama | azure_openai | huggingface -->
+    <!-- == LM Studio (local) == -->
+    <!--
+    <provider>lmstudio</provider>
+    <api_key></api_key>
+    <model>qwen2.5-3b-instruct</model>
+    <endpoint>http://localhost:1234</endpoint>
+    -->
+    <!-- == Azure OpenAI == -->
+    <!-- endpoint: https://<recurso>.openai.azure.com/openai/deployments/<deployment> -->
+    <provider>azure_openai</provider>
+    <api_key>TU_AZURE_OPENAI_KEY</api_key>
+    <model>gpt-4o-mini</model>
+    <endpoint>https://TU-RECURSO.openai.azure.com/openai/deployments/TU-DEPLOYMENT</endpoint>
+    <api_version>2024-12-01-preview</api_version>
+    <!-- == Hugging Face Inference API ==
+         Obtener token en: https://huggingface.co/settings/tokens (rol: Inference)
+         Modelos recomendados: meta-llama/Llama-3.1-8B-Instruct, Qwen/Qwen2.5-7B-Instruct
+    -->
+    <!--
+    <provider>huggingface</provider>
+    <api_key>hf_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX</api_key>
+    <model>meta-llama/Llama-3.1-8B-Instruct</model>
+    <endpoint>https://router.huggingface.co</endpoint>
+    -->
+  </llm>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- Notificaciones de error por correo electrónico                         -->
+  <!-- Se envía un correo con los mensajes fallidos adjuntos si hay errores.  -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <notifications>
+    <!-- Activar/desactivar notificaciones -->
+    <enabled>false</enabled>
+    <!-- Servidor SMTP (ej: smtp-mail.outlook.com, smtp.gmail.com) -->
+    <smtp_server>smtp-mail.outlook.com</smtp_server>
+    <!-- Puerto SMTP: 587 con STARTTLS, 465 con SSL directo -->
+    <smtp_port>587</smtp_port>
+    <!-- true = STARTTLS (puerto 587) | false = SSL directo (puerto 465) -->
+    <smtp_tls>true</smtp_tls>
+    <!-- Cuenta que enviará el correo de notificación.
+         Para Outlook/Hotmail: si <oauth2_client_id> está configurado en <email>,
+         se autentica automáticamente con OAuth2 (sin contraseña necesaria).
+         Para otros servidores SMTP: rellenar smtp_user + smtp_password.
+    -->
+    <smtp_user>notificaciones@example.com</smtp_user>
+    <smtp_password></smtp_password>  <!-- dejar vacío si usas OAuth2 -->
+    <!-- Dirección remitente del correo de notificación -->
+    <from>notificaciones@example.com</from>
+    <!-- Lista de destinatarios separados por comas -->
+    <to>admin@example.com, responsable@example.com</to>
+  </notifications>
+
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <!-- Base de datos PostgreSQL                                               -->
+  <!-- Los consumos identificados se insertan en la tabla 'consumptions'.    -->
+  <!-- ══════════════════════════════════════════════════════════════════════ -->
+  <db>
+    <!-- Poner false para deshabilitar la inserción en BD -->
+    <enabled>false</enabled>
+    <host>localhost</host>
+    <port>5432</port>
+    <database>processmail</database>
+    <username>postgres</username>
+    <password>tu_password</password>
+    <!-- Columna de ga_landing.ite_consorciat que contiene el nombre de la empresa -->
+    <consorciat_name_field>nom</consorciat_name_field>
+    <!-- Umbral de similitud de texto para identificar empresas (0.0 a 1.0).
+         0.6 = tolerante (acepta abreviaciones, errores tipográficos leves).
+         0.8 = estricto  (requiere coincidencia casi exacta).
+         Si una empresa no supera el umbral, el consumo se omite con un aviso en el log. -->
+    <match_threshold>0.6</match_threshold>
+    <!-- Encoding del servidor PostgreSQL. Valores habituales: LATIN1, UTF8, WIN1252.
+         Si ves errores 'codec can't decode byte', ajusta este valor según el servidor. -->
+    <client_encoding>LATIN1</client_encoding>
+  </db>
+
+</config>

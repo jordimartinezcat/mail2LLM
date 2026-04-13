@@ -1,0 +1,300 @@
+import email
+import imaplib
+import logging
+from email.header import decode_header
+from email.message import Message
+from typing import Generator
+
+from config.loader import EmailConfig
+from email_io.oauth2 import get_imap_oauth2_string
+
+logger = logging.getLogger("processMail")
+
+
+# ---------------------------------------------------------------------------
+# Helpers de decodificación
+# ---------------------------------------------------------------------------
+
+
+def _decode_header_value(value: str | None) -> str:
+    """Decodifica una cabecera MIME (Subject, From, etc.) a cadena de texto."""
+    if not value:
+        return ""
+    parts = decode_header(value)
+    decoded_parts = []
+    for raw, charset in parts:
+        if isinstance(raw, bytes):
+            decoded_parts.append(raw.decode(charset or "utf-8", errors="replace"))
+        else:
+            decoded_parts.append(raw)
+    return "".join(decoded_parts)
+
+
+def _extract_plain_body(msg: Message) -> str:
+    """Extrae el cuerpo en texto plano de un mensaje (soporta multipart)."""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if (
+                part.get_content_type() == "text/plain"
+                and "attachment" not in str(part.get("Content-Disposition", ""))
+            ):
+                charset = part.get_content_charset() or "utf-8"
+                payload = part.get_payload(decode=True)
+                if payload:
+                    return _clean_body(payload.decode(charset, errors="replace"))
+        return ""
+    else:
+        charset = msg.get_content_charset() or "utf-8"
+        payload = msg.get_payload(decode=True)
+        return _clean_body(payload.decode(charset, errors="replace")) if payload else ""
+
+
+def _clean_body(text: str) -> str:
+    """
+    Normaliza el cuerpo del correo para facilitar la extracción por el LLM:
+    - Elimina líneas de firma y separadores típicos de email
+    - Colapsa líneas en blanco múltiples en una sola
+    - Normaliza tabulaciones y espacios múltiples en columnas alineadas
+    - Elimina caracteres de control y líneas irrelevantes
+    """
+    import re as _re
+
+    lines = text.splitlines()
+    cleaned = []
+    for line in lines:
+        # Eliminar líneas de firma típicas
+        stripped = line.strip()
+        if stripped in ("--", "—", "___", "---") or _re.match(r"^[-_=]{3,}$", stripped):
+            break  # Todo lo que viene después es firma, descartar
+        # Normalizar tabulaciones a espacios
+        line = line.replace("\t", "    ")
+        # Colapsar secuencias de más de 2 espacios internos a 2 (preserva alineación de tablas)
+        # pero solo en líneas que no parecen tablas (sin múltiples columnas)
+        if not _re.search(r"\s{3,}\S", line):
+            line = _re.sub(r"  +", " ", line)
+        cleaned.append(line.rstrip())
+
+    # Colapsar líneas en blanco múltiples en una sola
+    result = _re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned))
+    return result.strip()
+
+
+# ---------------------------------------------------------------------------
+# Clase principal
+# ---------------------------------------------------------------------------
+
+
+class EmailReader:
+    """
+    Gestiona la conexión IMAP y la descarga de mensajes nuevos (UNSEEN).
+
+    Uso recomendado como context manager:
+
+        with EmailReader(config.email) as reader:
+            for uid, msg_data in reader.fetch_new_messages():
+                ...
+    """
+
+    def __init__(self, config: EmailConfig) -> None:
+        self.config = config
+        self._conn: imaplib.IMAP4_SSL | imaplib.IMAP4 | None = None
+
+    # ------------------------------------------------------------------
+    # Conexión
+    # ------------------------------------------------------------------
+
+    def connect(self) -> None:
+        logger.info(
+            "Conectando al servidor IMAP %s:%d (SSL=%s)",
+            self.config.server,
+            self.config.port,
+            self.config.ssl,
+        )
+        try:
+            if self.config.ssl:
+                self._conn = imaplib.IMAP4_SSL(self.config.server, self.config.port)
+            else:
+                self._conn = imaplib.IMAP4(self.config.server, self.config.port)
+
+            if self.config.oauth2_client_id:
+                # Autenticación OAuth2 (requerida para Outlook/Hotmail/Office 365)
+                oauth2_string = get_imap_oauth2_string(
+                    username=self.config.username,
+                    client_id=self.config.oauth2_client_id,
+                    token_cache_path=self.config.oauth2_token_cache,
+                )
+                self._conn.authenticate("XOAUTH2", lambda x: oauth2_string)
+                logger.info("Sesión IMAP iniciada como '%s' (OAuth2)", self.config.username)
+            else:
+                # Autenticación básica (servidores que aún la soportan)
+                self._conn.login(self.config.username, self.config.password)
+                logger.info("Sesión IMAP iniciada como '%s' (basic auth)", self.config.username)
+
+        except imaplib.IMAP4.error as exc:
+            logger.error("Error al conectar con el servidor IMAP: %s", exc)
+            raise
+
+    def disconnect(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.logout()
+                logger.info("Conexión IMAP cerrada correctamente")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Error al cerrar la conexión IMAP: %s", exc)
+            finally:
+                self._conn = None
+
+    # ------------------------------------------------------------------
+    # Conteo de mensajes nuevos
+    # ------------------------------------------------------------------
+
+    def count_new_messages(self) -> int:
+        """Devuelve el número total de mensajes de la carpeta (leídos y no leídos)."""
+        if self._conn is None:
+            raise RuntimeError("No hay conexión IMAP activa. Llama a connect() primero.")
+
+        status, _ = self._conn.select(self.config.folder, readonly=True)
+        if status != "OK":
+            logger.error("No se pudo seleccionar la carpeta '%s'", self.config.folder)
+            raise RuntimeError(f"No se puede abrir la carpeta: {self.config.folder}")
+
+        status, data = self._conn.uid("search", None, "ALL")
+        if status != "OK":
+            logger.error("Fallo al buscar mensajes")
+            return 0
+
+        msg_ids = data[0].split() if data[0] else []
+        count = len(msg_ids)
+        logger.info("Mensajes en '%s': %d", self.config.folder, count)
+        return count
+
+    # ------------------------------------------------------------------
+    # Descarga de mensajes
+    # ------------------------------------------------------------------
+
+    def fetch_new_messages(self) -> Generator[tuple[str, dict], None, None]:
+        """
+        Genera tuplas (uid, message_data) para cada mensaje UNSEEN de la carpeta
+        configurada. Los mensajes se marcan como leídos (\Seen) al ser descargados.
+
+        Yields:
+            uid:          Identificador numérico del mensaje en el servidor.
+            message_data: Diccionario con claves subject, sender, date, body.
+        """
+        if self._conn is None:
+            raise RuntimeError("No hay conexión IMAP activa. Llama a connect() primero.")
+
+        # Seleccionar carpeta
+        status, _ = self._conn.select(self.config.folder)
+        if status != "OK":
+            logger.error("No se pudo seleccionar la carpeta '%s'", self.config.folder)
+            raise RuntimeError(f"No se puede abrir la carpeta: {self.config.folder}")
+
+        logger.info("Buscando mensajes en '%s'", self.config.folder)
+        status, data = self._conn.uid("search", None, "ALL")
+        if status != "OK":
+            logger.error("Fallo al buscar mensajes")
+            return
+
+        msg_ids: list[bytes] = data[0].split() if data[0] else []
+        logger.info("Mensajes encontrados: %d", len(msg_ids))
+
+        for msg_id in msg_ids:
+            uid = msg_id.decode()
+            try:
+                status, raw_data = self._conn.uid("fetch", msg_id, "(RFC822)")
+                if status != "OK" or not raw_data or raw_data[0] is None:
+                    logger.warning("No se pudo descargar el mensaje ID %s", uid)
+                    continue
+
+                raw_bytes: bytes = raw_data[0][1]  # type: ignore[index]
+                msg = email.message_from_bytes(raw_bytes)
+
+                subject = _decode_header_value(msg.get("Subject"))
+                sender = _decode_header_value(msg.get("From"))
+                date = msg.get("Date", "")
+                body = _extract_plain_body(msg)
+
+                message_data = {
+                    "id": uid,
+                    "subject": subject,
+                    "sender": sender,
+                    "date": date,
+                    "body": body,
+                }
+
+                logger.info(
+                    "Mensaje descargado [%s] Asunto: '%s' | De: %s",
+                    uid,
+                    subject,
+                    sender,
+                )
+                yield uid, message_data
+
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Error procesando el mensaje ID %s: %s", uid, exc)
+
+    # ------------------------------------------------------------------
+    # Mover mensaje a otra carpeta
+    # ------------------------------------------------------------------
+
+    def move_message(self, msg_id: str, destination_folder: str) -> bool:
+        """
+        Mueve un mensaje a la carpeta destino usando COPY + DELETE + EXPUNGE.
+        Crea la carpeta destino si no existe.
+        Devuelve True si el movimiento fue exitoso.
+        """
+        if self._conn is None:
+            raise RuntimeError("No hay conexión IMAP activa.")
+
+        # Crear carpeta destino si no existe
+        status, _ = self._conn.select(destination_folder)
+        if status != "OK":
+            logger.info("Creando carpeta '%s'", destination_folder)
+            create_status, _ = self._conn.create(destination_folder)
+            if create_status != "OK":
+                logger.error("No se pudo crear la carpeta '%s'", destination_folder)
+                return False
+
+        # Volver a seleccionar la carpeta origen
+        self._conn.select(self.config.folder)
+
+        # Copiar a destino usando UID
+        status, _ = self._conn.uid("copy", msg_id, destination_folder)
+        if status != "OK":
+            logger.error(
+                "No se pudo copiar el mensaje [%s] a '%s'", msg_id, destination_folder
+            )
+            return False
+
+        # Marcar como borrado en origen y expurgar usando UID
+        self._conn.uid("store", msg_id, "+FLAGS", "\\Deleted")
+        self._conn.expunge()
+
+        logger.info(
+            "Mensaje [%s] movido a '%s'", msg_id, destination_folder
+        )
+        return True
+
+    # ------------------------------------------------------------------
+    # Marcar mensaje como no leído
+    # ------------------------------------------------------------------
+
+    def mark_as_unread(self, msg_id: str) -> None:
+        """Elimina el flag \\Seen del mensaje, devolviéndolo a no leído."""
+        if self._conn is None:
+            raise RuntimeError("No hay conexión IMAP activa.")
+        self._conn.uid("store", msg_id, "-FLAGS", "\\Seen")
+        logger.info("Mensaje [%s] marcado como no leído", msg_id)
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> "EmailReader":
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        self.disconnect()
+        return False

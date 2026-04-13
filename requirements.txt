@@ -1,0 +1,19 @@
+# processMail — dependencias del proyecto
+# Instalar con: B:\envs\generic\Scripts\pip install -r requirements.txt
+#
+# Fase 1 (lectura de correos):
+#   imaplib, email, xml.etree.ElementTree, logging — stdlib de Python
+#   msal — OAuth2 con Microsoft Identity Platform (Outlook/Hotmail/Office 365)
+msal>=1.30.0
+#
+# Fase 2 (procesamiento LLM) — descomentar según proveedor:
+# openai>=1.30.0
+# anthropic>=0.25.0
+#
+# Fase 3 (base de datos PostgreSQL):
+psycopg2-binary>=2.9.9
+
+# Dependencias de base ya presentes en el entorno generic
+# (se listan para documentar la versión mínima requerida)
+# pydantic>=2.0
+# python-dotenv>=1.0

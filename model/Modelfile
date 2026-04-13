@@ -1,0 +1,7 @@
+FROM C:\Users\Jordi\.lmstudio\models\lmstudio-community\Qwen3.5-4B-GGUF\Qwen3.5-4B-Q4_K_M.gguf
+
+PARAMETER temperature 0.1
+PARAMETER top_p 0.9
+PARAMETER num_ctx 8192
+
+SYSTEM "Eres un asistente especializado en extraer datos estructurados de correos electrónicos. Responde siempre en formato JSON válido, sin texto adicional. No uses bloques de razonamiento interno, responde directamente."
