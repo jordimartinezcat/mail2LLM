@@ -1,0 +1,61 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches:
+      - main
+      - production
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: dlapicat-webapp-5964
+  ACR_NAME: dlapicatregistry5964
+  IMAGE_NAME: dlapicat-api
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v3
+    
+    - name: 🔐 Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: 🐳 Login to Azure Container Registry
+      run: |
+        az acr login --name ${{ env.ACR_NAME }}
+    
+    - name: 🏗️ Build Docker image
+      run: |
+        docker build -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+        docker tag ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+                   ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+    
+    - name: ⬆️ Push to ACR
+      run: |
+        docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+    
+    - name: 🗄️ Run database migrations
+      run: |
+        # Aquí ejecutarías las migraciones
+        echo "Migrations should be run manually or via secure connection"
+    
+    - name: 🚀 Deploy to Azure Web App
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ env.AZURE_WEBAPP_NAME }}
+        images: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+    
+    - name: 🔄 Restart Web App
+      run: |
+        az webapp restart --name ${{ env.AZURE_WEBAPP_NAME }} --resource-group rg-dlapicat
+    
+    - name: ✅ Deployment complete
+      run: |
+        echo "🎉 Deployment successful!"
+        echo "🌐 App URL: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net"
