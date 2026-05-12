@@ -16,6 +16,11 @@
     <password></password>
     <ssl>true</ssl>
     <folder>INBOX</folder>
+    <!-- Carpetas de destino según resultado del procesamiento -->
+    <folder_processed>0_Processats</folder_processed>
+    <folder_confirmed>0_Confirmacions_OK</folder_confirmed>
+    <folder_rejected>0_Denegats</folder_rejected>
+    <folder_errors>0_No_processats</folder_errors>
     <!-- Para Outlook/Hotmail/Office 365: Application (client) ID del app registrada en Azure Portal.
          Pasos: https://learn.microsoft.com/azure/active-directory/develop/quickstart-register-app
          Permisos requeridos en la app: IMAP.AccessAsUser.All (tipo Delegado)

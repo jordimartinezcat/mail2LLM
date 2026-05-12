@@ -11,7 +11,10 @@ class EmailConfig:
     password: str
     ssl: bool
     folder: str
-    processed_folder: str = "0000_processed"
+    folder_processed: str = "0_Processats"          # Mensajes originales procesados
+    folder_confirmed: str = "0_Confirmacions_OK"     # Confirmaciones afirmativas
+    folder_rejected: str = "0_Denegats"              # Confirmaciones negativas
+    folder_errors: str = "0_No_processats"           # Mensajes con errores
     # OAuth2 (requerido para Outlook/Hotmail; vacío si se usa autenticación básica)
     oauth2_client_id: str = ""
     oauth2_token_cache: str = "token_cache.json"
@@ -90,7 +93,10 @@ def load_config(config_path: str | None = None) -> AppConfig:
         password=(email_elem.findtext("password") or "").strip(),
         ssl=(email_elem.findtext("ssl") or "true").strip().lower() == "true",
         folder=(email_elem.findtext("folder") or "INBOX").strip(),
-        processed_folder=(email_elem.findtext("processed_folder") or "0000_processed").strip(),
+        folder_processed=(email_elem.findtext("folder_processed") or "0_Processats").strip(),
+        folder_confirmed=(email_elem.findtext("folder_confirmed") or "0_Confirmacions_OK").strip(),
+        folder_rejected=(email_elem.findtext("folder_rejected") or "0_Denegats").strip(),
+        folder_errors=(email_elem.findtext("folder_errors") or "0_No_processats").strip(),
         oauth2_client_id=(email_elem.findtext("oauth2_client_id") or "").strip(),
         oauth2_token_cache=(email_elem.findtext("oauth2_token_cache") or "token_cache.json").strip(),
     )

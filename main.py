@@ -1,11 +1,72 @@
+import re
 import sys
 
 from config.loader import load_config
 from db.repository import load_consorciat_cache, save_consumptions
-from email_io.notifier import send_error_notification
+from email_io.notifier import send_confirmation_request, send_error_notification
 from email_io.reader import EmailReader
 from llm.processor import Consumption, extract_consumption
 from logger_setup import setup_logger
+from pending_confirmations import confirm_and_remove, save_pending
+
+
+def _is_confirmation_message(body: str, subject: str) -> bool:
+    """
+    Detecta si un mensaje es una respuesta de confirmación.
+    Busca palabras clave como: OK, CONFIRMAR, SÍ, SI, ACEPTAR
+    """
+    if not body:
+        return False
+    
+    text = (body + " " + (subject or "")).upper()
+    keywords = [
+        r'\bOK\b',
+        r'\bCONFIRMAR\b',
+        r'\bSÍ\b',
+        r'\bSI\b',
+        r'\bACEPTAR\b',
+        r'\bCONFIRMO\b',
+        r'\bACEPTO\b',
+    ]
+    
+    return any(re.search(pattern, text) for pattern in keywords)
+
+
+def _extract_confirmation_uid(body: str, raw: str = "", subject: str = "") -> str | None:
+    """
+    Extrae el UID de confirmación del subject, body o mensaje raw.
+    Busca patrón: 
+      - En subject: [CONFIRMACIÓN #135]
+      - En body/raw: (ID de confirmación: 135)
+    
+    Args:
+        body: Cuerpo de texto plano del mensaje
+        raw: Mensaje raw completo (opcional, para buscar en partes citadas)
+        subject: Asunto del mensaje (prioritario)
+    
+    Returns:
+        UID como string, o None si no se encuentra
+    """
+    # PRIORIDAD 1: Buscar en el subject (más confiable)
+    if subject:
+        # Patrón: [CONFIRMACIÓN #135] o RE: [CONFIRMACIÓN #135]
+        match = re.search(r'\[CONFIRMACI[ÓO]N\s+#(\d+)\]', subject, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    
+    # PRIORIDAD 2: Buscar en el body
+    if body:
+        match = re.search(r'\(ID de confirmación:\s*(\d+)\)', body, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    
+    # PRIORIDAD 3: Buscar en el mensaje raw completo
+    if raw:
+        match = re.search(r'\(ID de confirmación:\s*(\d+)\)', raw, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    
+    return None
 
 
 def main() -> None:
@@ -61,9 +122,137 @@ def main() -> None:
                         "body": "(sin cuerpo de texto)",
                         "reason": "Sin cuerpo de texto",
                     })
+                    reader.move_message(uid, config.email.folder_errors)
                     errors += 1
                     continue
 
+                # ═══════════════════════════════════════════════════════════════
+                # DETECTAR SI ES UNA CONFIRMACIÓN
+                # ═══════════════════════════════════════════════════════════════
+                if _is_confirmation_message(msg["body"], msg["subject"]):
+                    logger.info("Mensaje [%s] detectado como CONFIRMACIÓN", uid)
+                    
+                    # Buscar UID original: primero en subject, luego en body/raw
+                    original_uid = _extract_confirmation_uid(
+                        msg["body"], 
+                        msg.get("raw", ""),
+                        msg["subject"]
+                    )
+                    
+                    if not original_uid:
+                        logger.warning(
+                            "Confirmación [%s] sin UID válido — movido a errores",
+                            uid,
+                        )
+                        failed_messages.append({
+                            "uid": uid,
+                            "subject": msg["subject"],
+                            "sender": msg["sender"],
+                            "date": msg.get("date", ""),
+                            "body": msg["body"],
+                            "reason": "Confirmación sin UID de referencia",
+                        })
+                        reader.move_message(uid, config.email.folder_errors)
+                        errors += 1
+                        continue
+                    
+                    # Recuperar consumos pendientes
+                    consumptions_data = confirm_and_remove(original_uid)
+                    
+                    if not consumptions_data:
+                        logger.warning(
+                            "Confirmación [%s] para UID [%s] que no tiene consumos pendientes",
+                            uid,
+                            original_uid,
+                        )
+                        failed_messages.append({
+                            "uid": uid,
+                            "subject": msg["subject"],
+                            "sender": msg["sender"],
+                            "date": msg.get("date", ""),
+                            "body": msg["body"],
+                            "reason": f"Sin consumos pendientes para UID {original_uid}",
+                        })
+                        reader.move_message(uid, config.email.folder_errors)
+                        errors += 1
+                        continue
+                    
+                    # Reconstruir objetos Consumption
+                    consumptions = [
+                        Consumption(
+                            fecha=c["fecha"],
+                            empresa=c["empresa"],
+                            valor=c["valor"],
+                            unidades=c["unidades"],
+                        )
+                        for c in consumptions_data
+                    ]
+                    
+                    logger.info(
+                        "Confirmación [%s] → Insertando %d consumo(s) del mensaje original [%s]",
+                        uid,
+                        len(consumptions),
+                        original_uid,
+                    )
+                    
+                    # Insertar en BD
+                    db_not_found: list[str] = []
+                    if config.db.enabled:
+                        try:
+                            _, db_not_found = save_consumptions(
+                                consumptions, config.db, consorciat_cache
+                            )
+                        except Exception as db_exc:  # noqa: BLE001
+                            logger.error(
+                                "Error al guardar en BD los consumos confirmados [%s]: %s",
+                                uid,
+                                db_exc,
+                            )
+                            failed_messages.append({
+                                "uid": uid,
+                                "subject": msg["subject"],
+                                "sender": msg["sender"],
+                                "date": msg.get("date", ""),
+                                "body": msg["body"],
+                                "reason": f"Error BD: {db_exc}",
+                            })
+                            reader.move_message(uid, config.email.folder_errors)
+                            errors += 1
+                            continue
+                    
+                    if db_not_found:
+                        logger.warning(
+                            "Confirmación [%s] con %d empresa(s) no identificada(s): %s",
+                            uid,
+                            len(db_not_found),
+                            ", ".join(db_not_found),
+                        )
+                        failed_messages.append({
+                            "uid": uid,
+                            "subject": msg["subject"],
+                            "sender": msg["sender"],
+                            "date": msg.get("date", ""),
+                            "body": msg["body"],
+                            "reason": f"Empresa(s) no identificada(s): {', '.join(db_not_found)}",
+                        })
+                        reader.move_message(uid, config.email.folder_errors)
+                        errors += 1
+                        continue
+                    
+                    # Mover confirmación a carpeta de confirmaciones OK
+                    reader.move_message(uid, config.email.folder_confirmed)
+                    results.extend(consumptions)
+                    processed += 1
+                    
+                    logger.info(
+                        "✓ Consumos confirmados e insertados en BD (mensaje original [%s])",
+                        original_uid,
+                    )
+                    continue
+
+                # ═══════════════════════════════════════════════════════════════
+                # MENSAJE NORMAL: EXTRAER CONSUMOS
+                # ═══════════════════════════════════════════════════════════════
                 consumptions = extract_consumption(msg["body"], config.llm, msg["date"])
 
                 if consumptions is None:
@@ -78,7 +267,7 @@ def main() -> None:
                         "body": msg["body"],
                         "reason": "Error al llamar al LLM o respuesta no parseable",
                     })
-                    reader.mark_as_unread(uid)
+                    reader.move_message(uid, config.email.folder_errors)
                     errors += 1
                     continue
 
@@ -97,7 +286,7 @@ def main() -> None:
                         "body": msg["body"],
                         "reason": "Sin datos de consumo detectados",
                     })
-                    reader.mark_as_unread(uid)
+                    reader.move_message(uid, config.email.folder_errors)
                     errors += 1
                     continue
 
@@ -113,7 +302,7 @@ def main() -> None:
                             uid, c.fecha, c.empresa, c.valor,
                         )
                     logger.warning(
-                        "Mensaje [%s] con %d registro(s) incompleto(s) — se deja en origen y se marca no leído",
+                        "Mensaje [%s] con %d registro(s) incompleto(s) — movido a errores",
                         uid, len(incompletos),
                     )
                     failed_messages.append({
@@ -130,7 +319,7 @@ def main() -> None:
                             )
                         ),
                     })
-                    reader.mark_as_unread(uid)
+                    reader.move_message(uid, config.email.folder_errors)
                     errors += 1
                     continue
 
@@ -140,20 +329,34 @@ def main() -> None:
                         c.fecha, c.empresa, c.valor, c.unidades,
                     )
 
-                # Mover mensaje a carpeta de procesados (solo si todos los registros están completos)
-                # y si la BD no rechaza ningún consumo por empresa no identificada
-                db_not_found: list[str] = []
-                if config.db.enabled:
-                    try:
-                        _, db_not_found = save_consumptions(consumptions, config.db, consorciat_cache)
-                    except Exception as db_exc:  # noqa: BLE001
-                        logger.error("Error al guardar en BD el mensaje [%s]: %s", uid, db_exc)
-
-                if db_not_found:
-                    logger.warning(
-                        "Mensaje [%s] con %d empresa(s) no identificada(s) en BD: %s — "
-                        "se deja en origen para revisión manual",
-                        uid, len(db_not_found), ", ".join(db_not_found),
+                # ═══════════════════════════════════════════════════════════════
+                # GUARDAR COMO PENDIENTE Y ENVIAR CONFIRMACIÓN
+                # ═══════════════════════════════════════════════════════════════
+                try:
+                    save_pending(uid, msg, consumptions)
+                    send_confirmation_request(
+                        uid=uid,
+                        original_sender=msg["sender"],
+                        original_subject=msg["subject"],
+                        consumptions=consumptions,
+                        config=config,
+                        logger=logger,
+                    )
+                    
+                    # Mover mensaje a carpeta de procesados
+                    reader.move_message(uid, config.email.folder_processed)
+                    processed += 1
+                    
+                    logger.info(
+                        "✓ Consumos guardados como pendientes — confirmación enviada (UID: %s)",
+                        uid,
+                    )
+                    
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Error al guardar pendientes o enviar confirmación [%s]: %s",
+                        uid,
+                        exc,
                     )
                     failed_messages.append({
                         "uid": uid,
@@ -161,18 +364,10 @@ def main() -> None:
                         "sender": msg["sender"],
                         "date": msg.get("date", ""),
                         "body": msg["body"],
-                        "reason": (
-                            f"Empresa(s) no identificada(s) en BD: {', '.join(db_not_found)}"
-                        ),
+                        "reason": f"Error al procesar: {exc}",
                     })
-                    reader.mark_as_unread(uid)
+                    reader.move_message(uid, config.email.folder_errors)
                     errors += 1
-                    continue
-
-                reader.move_message(uid, config.email.processed_folder)
-
-                results.extend(consumptions)
-                processed += 1
 
             logger.info(
                 "Ejecución finalizada — procesados: %d | errores: %d",

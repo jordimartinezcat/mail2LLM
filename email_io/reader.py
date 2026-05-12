@@ -214,6 +214,8 @@ class EmailReader:
                 sender = _decode_header_value(msg.get("From"))
                 date = msg.get("Date", "")
                 body = _extract_plain_body(msg)
+                # Guardar mensaje raw completo para búsquedas avanzadas
+                raw_text = raw_bytes.decode("utf-8", errors="ignore")
 
                 message_data = {
                     "id": uid,
@@ -221,6 +223,7 @@ class EmailReader:
                     "sender": sender,
                     "date": date,
                     "body": body,
+                    "raw": raw_text,  # Mensaje completo para extraer UIDs de confirmación
                 }
 
                 logger.info(

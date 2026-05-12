@@ -114,3 +114,162 @@ def send_error_notification(
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("No se pudo enviar la notificación de error: %s", exc)
+
+
+def send_confirmation_request(
+    uid: str,
+    original_sender: str,
+    original_subject: str,
+    consumptions: list,
+    config,
+    logger: logging.Logger,
+) -> None:
+    """
+    Envía un correo HTML solicitando confirmación para insertar consumos en BD.
+    
+    Args:
+        uid: UID del mensaje original
+        original_sender: Remitente del mensaje con consumos
+        original_subject: Asunto del mensaje original
+        consumptions: Lista de objetos Consumption extraídos
+        config: Configuración completa (email + notifications)
+        logger: Logger
+    """
+    nc = config.notifications
+    if not nc.enabled:
+        logger.warning("No se puede enviar confirmación: notificaciones deshabilitadas")
+        return
+    if not nc.to_addrs:
+        logger.warning("No se puede enviar confirmación: sin destinatarios configurados")
+        return
+    
+    # ── Construir tabla HTML de consumos ──────────────────────────────────────
+    consumptions_rows = ""
+    for i, c in enumerate(consumptions, 1):
+        consumptions_rows += f"""
+        <tr>
+            <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{i}</td>
+            <td style="padding: 8px; border: 1px solid #ddd;">{c.fecha}</td>
+            <td style="padding: 8px; border: 1px solid #ddd;">{c.empresa}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">{c.valor} {c.unidades}</td>
+        </tr>"""
+    
+    # ── Cuerpo HTML del correo ────────────────────────────────────────────────
+    body_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 800px; margin: 20px auto; padding: 20px; background: #f9f9f9; border-radius: 8px; }}
+        .header {{ background: #2E75B6; color: white; padding: 15px; border-radius: 5px; }}
+        .info-box {{ background: white; padding: 15px; margin: 15px 0; border-left: 4px solid #2E75B6; }}
+        table {{ width: 100%; border-collapse: collapse; background: white; margin: 15px 0; }}
+        th {{ background: #2E75B6; color: white; padding: 10px; text-align: left; }}
+        .actions {{ background: #fff3cd; padding: 15px; margin: 20px 0; border-radius: 5px; border: 2px solid #ffc107; }}
+        .button {{ display: inline-block; padding: 10px 20px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; margin: 5px; }}
+        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 20px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>✉️ Confirmación Requerida - Consumos Detectados</h2>
+        </div>
+        
+        <div class="info-box">
+            <p><strong>Se han extraído {len(consumptions)} consumo(s) del siguiente correo:</strong></p>
+            <ul>
+                <li><strong>Remitente:</strong> {original_sender}</li>
+                <li><strong>Asunto:</strong> {original_subject}</li>
+                <li><strong>UID:</strong> {uid}</li>
+            </ul>
+        </div>
+        
+        <h3>📊 Consumos detectados:</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th style="padding: 10px; border: 1px solid #ddd;">#</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Fecha</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Empresa</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Consumo</th>
+                </tr>
+            </thead>
+            <tbody>
+                {consumptions_rows}
+            </tbody>
+        </table>
+        
+        <div class="actions">
+            <h3>⚠️ Acción requerida</h3>
+            <p><strong>Para CONFIRMAR la inserción en la base de datos</strong>, responde este correo con una de las siguientes palabras:</p>
+            <p style="text-align: center; font-size: 18px; margin: 15px 0;">
+                <strong>OK</strong> | <strong>CONFIRMAR</strong> | <strong>SÍ</strong> | <strong>ACEPTAR</strong>
+            </p>
+            <p>Para <strong>RECHAZAR</strong>, simplemente ignora este mensaje.</p>
+        </div>
+        
+        <div class="footer">
+            <p style="color: #999; font-size: 11px;">ID de confirmación: {uid}</p>
+            <p>Este es un mensaje automático del sistema mail2LLM</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+    
+    # ── Versión texto plano (fallback) ────────────────────────────────────────
+    body_text = f"""
+Se han extraído {len(consumptions)} consumo(s) del siguiente correo:
+
+  Remitente: {original_sender}
+  Asunto: {original_subject}
+  UID: {uid}
+
+Consumos detectados:
+
+"""
+    for i, c in enumerate(consumptions, 1):
+        body_text += f"  {i}. Fecha: {c.fecha} | Empresa: {c.empresa} | Valor: {c.valor} {c.unidades}\n"
+    
+    body_text += """
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Para CONFIRMAR la inserción en la base de datos, responde este correo
+con una de las siguientes palabras:
+
+  • OK
+  • CONFIRMAR
+  • SÍ / SI
+  • ACEPTAR
+
+Para RECHAZAR, simplemente ignora este mensaje.
+
+(ID de confirmación: {uid})
+"""
+    
+    # ── Construir mensaje MIME con HTML + texto ───────────────────────────────
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"[CONFIRMACIÓN #{uid}] Consumos: {original_subject}"
+    msg["From"] = nc.from_addr
+    msg["To"] = ", ".join(nc.to_addrs)
+    
+    # Adjuntar ambas versiones (texto plano primero, HTML después)
+    msg.attach(MIMEText(body_text, "plain", "utf-8"))
+    msg.attach(MIMEText(body_html, "html", "utf-8"))
+    
+    # ── Enviar ────────────────────────────────────────────────────────────────
+    try:
+        with _smtp_connect(nc, config.email, logger) as smtp:
+            smtp.sendmail(nc.from_addr, nc.to_addrs, msg.as_string())
+        
+        logger.info(
+            "Solicitud de confirmación HTML enviada a: %s (UID: %s, %d consumo(s))",
+            ", ".join(nc.to_addrs),
+            uid,
+            len(consumptions),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("No se pudo enviar la solicitud de confirmación: %s", exc)
