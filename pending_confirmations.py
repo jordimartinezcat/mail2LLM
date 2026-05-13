@@ -58,21 +58,67 @@ def get_pending(uid: str) -> dict | None:
 
 def confirm_and_remove(uid: str) -> list[dict] | None:
     """
-    Marca consumos como confirmados y los elimina de pendientes.
+    Marca tots els consums com a confirmats i els elimina de pendents.
     
     Returns:
-        Lista de consumptions dict, o None si el UID no existe
+        Llista de consumptions dict, o None si el UID no existeix
+    """
+    return confirm_and_remove_selective(uid, None)
+
+
+def confirm_and_remove_selective(uid: str, line_numbers: list[int] | None = None) -> list[dict] | None:
+    """
+    Confirma consums selectius o tots (si line_numbers és None).
+    
+    Args:
+        uid: UID del missatge original
+        line_numbers: Llista de números de línia a confirmar (1-indexed), o None per tots
+    
+    Returns:
+        Llista de consumptions confirmats, o None si el UID no existeix
     """
     pending = _load_pending_data()
     
     if uid not in pending:
         return None
     
-    data = pending.pop(uid)
-    _save_pending_data(pending)
+    data = pending[uid]
+    all_consumptions = data["consumptions"]
     
-    logger.info("Consumos del mensaje [%s] confirmados y eliminados de pendientes", uid)
-    return data["consumptions"]
+    # Si no hi ha números especificats, confirmar TOTS
+    if line_numbers is None:
+        pending.pop(uid)
+        _save_pending_data(pending)
+        logger.info("TOTS els consums del missatge [%s] confirmats i eliminats de pendents", uid)
+        return all_consumptions
+    
+    # Confirmació selectiva
+    confirmed = []
+    remaining = []
+    
+    for i, consumption in enumerate(all_consumptions, 1):
+        if i in line_numbers:
+            confirmed.append(consumption)
+        else:
+            remaining.append(consumption)
+    
+    # Si queden consums pendents, actualitzar; si no, eliminar entrada
+    if remaining:
+        data["consumptions"] = remaining
+        pending[uid] = data
+        logger.info(
+            "Consums selectius del missatge [%s] confirmats: %d de %d (queden %d pendents)",
+            uid, len(confirmed), len(all_consumptions), len(remaining)
+        )
+    else:
+        pending.pop(uid)
+        logger.info(
+            "Tots els consums del missatge [%s] han estat confirmats (últims %d)",
+            uid, len(confirmed)
+        )
+    
+    _save_pending_data(pending)
+    return confirmed
 
 
 def list_pending() -> dict[str, dict]:
