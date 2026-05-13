@@ -44,6 +44,12 @@ El sistema implementa un flujo de **confirmación en dos pasos** para garantizar
   - Valor (m³)
   - Unidades
 - **Soporte completo para emails HTML**: El LLM procesa correctamente tablas HTML, estilos CSS, y texto enriquecido
+- **✨ NUEVO: Soporte para archivos PDF adjuntos**: 
+  - Detecta y extrae automáticamente el contenido de todos los PDFs adjuntos
+  - Combina el cuerpo del email con el contenido de los PDFs
+  - El LLM procesa ambas fuentes de información simultáneamente
+  - Soporta múltiples PDFs por email
+  - Extrae texto de todas las páginas del PDF
 - Guarda los consumos como **pendientes de confirmación** en `pending_confirmations.json`
 - Envía un correo HTML al administrador solicitando confirmación
 - Mueve el mensaje original a `0_Processats`
@@ -384,6 +390,7 @@ Per REBUTJAR, simplement ignora aquest missatge.
 |---------------|--------|-------|
 | Extracción LLM (Azure OpenAI gpt-4o-mini) | ✅ Funcional | Sin parámetros extras (temperature, etc.) |
 | Soporte emails HTML | ✅ Funcional | LLM procesa tablas HTML correctamente |
+| **Soporte archivos PDF adjuntos** | ✅ **NUEVO** | Extrae texto de PDFs y combina con email |
 | Confirmación 2 pasos | ✅ Funcional | Emails en catalán, diseño profesional |
 | Confirmación TOTAL (OK) | ✅ Funcional | Detecta: OK, SÍ, CONFIRMAR, TOTS, ACEPTAR |
 | Confirmación SELECTIVA (1,3,5) | ⚠️ **CON BUGS** | Regex captura números del texto citado |

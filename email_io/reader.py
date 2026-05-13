@@ -1,9 +1,12 @@
 import email
 import imaplib
+import io
 import logging
 from email.header import decode_header
 from email.message import Message
 from typing import Generator
+
+from pypdf import PdfReader
 
 from config.loader import EmailConfig
 from email_io.oauth2 import get_imap_oauth2_string
@@ -47,6 +50,49 @@ def _extract_plain_body(msg: Message) -> str:
         charset = msg.get_content_charset() or "utf-8"
         payload = msg.get_payload(decode=True)
         return _clean_body(payload.decode(charset, errors="replace")) if payload else ""
+
+
+def _extract_pdf_attachments(msg: Message) -> list[str]:
+    """
+    Extrae el contenido de texto de todos los adjuntos PDF del mensaje.
+    Retorna una lista de strings, uno por cada PDF encontrado.
+    """
+    pdf_contents = []
+    
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get("Content-Disposition", ""))
+            
+            # Buscar adjuntos PDF
+            if content_type == "application/pdf" or (
+                "attachment" in content_disposition and 
+                part.get_filename() and part.get_filename().lower().endswith(".pdf")
+            ):
+                filename = part.get_filename() or "unknown.pdf"
+                try:
+                    pdf_data = part.get_payload(decode=True)
+                    if pdf_data:
+                        # Extraer texto del PDF
+                        pdf_file = io.BytesIO(pdf_data)
+                        reader = PdfReader(pdf_file)
+                        
+                        text_parts = []
+                        for page_num, page in enumerate(reader.pages, 1):
+                            page_text = page.extract_text()
+                            if page_text:
+                                text_parts.append(f"--- Página {page_num} ---\n{page_text}")
+                        
+                        if text_parts:
+                            full_text = "\n\n".join(text_parts)
+                            pdf_contents.append(f"[Adjunto PDF: {filename}]\n{full_text}")
+                            logger.info("PDF extraído: %s (%d páginas)", filename, len(reader.pages))
+                        else:
+                            logger.warning("PDF sin texto extraíble: %s", filename)
+                except Exception as exc:
+                    logger.error("Error extrayendo PDF %s: %s", filename, exc)
+    
+    return pdf_contents
 
 
 def _clean_body(text: str) -> str:
@@ -214,6 +260,8 @@ class EmailReader:
                 sender = _decode_header_value(msg.get("From"))
                 date = msg.get("Date", "")
                 body = _extract_plain_body(msg)
+                # Extraer PDFs adjuntos
+                pdf_contents = _extract_pdf_attachments(msg)
                 # Guardar mensaje raw completo para búsquedas avanzadas
                 raw_text = raw_bytes.decode("utf-8", errors="ignore")
 
@@ -223,6 +271,7 @@ class EmailReader:
                     "sender": sender,
                     "date": date,
                     "body": body,
+                    "pdf_contents": pdf_contents,  # Lista de contenidos de PDFs extraídos
                     "raw": raw_text,  # Mensaje completo para extraer UIDs de confirmación
                 }
 

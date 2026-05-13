@@ -31,8 +31,9 @@ def _compute_ref(email_date_str: str) -> tuple[str, int]:
             return f"{today.year}-{today.month - 1:02d}-01", today.year
 
 _PROMPT_TEMPLATE = """\
-Extract ALL water consumption records from the following email. The email may be written in Spanish or Catalan.
+Extract ALL water consumption records from the following email and its attachments. The email may be written in Spanish or Catalan.
 An email may contain one or more consumption records from different companies.
+The data may appear in the email body or in attached PDF files.
 
 Return ONLY a valid JSON array where each element has exactly these fields:
 - "fecha": consumption date in ISO 8601 format (YYYY-MM-DD). Accept any date format (DD/MM/YYYY, MM/YYYY, written month+year, etc.) and convert to ISO 8601.
@@ -72,14 +73,32 @@ class Consumption:
         }
 
 
-def extract_consumption(body: str, config: LLMConfig, email_date: str = "") -> list["Consumption"] | None:
+def extract_consumption(
+    body: str, 
+    config: LLMConfig, 
+    email_date: str = "",
+    pdf_contents: list[str] | None = None
+) -> list["Consumption"] | None:
     """
-    Envía el cuerpo del correo al LLM y extrae los datos de consumo.
-    email_date: cabecera Date: del correo (RFC 2822), usada para calcular la fecha de referencia.
-    Devuelve una lista de Consumption (puede ser vacía), o None si hay error.
+    Envía el cuerpo del correo y contenido de PDFs adjuntos al LLM y extrae los datos de consumo.
+    
+    Args:
+        body: Cuerpo del email en texto plano
+        config: Configuración del LLM
+        email_date: Cabecera Date: del correo (RFC 2822), usada para calcular la fecha de referencia
+        pdf_contents: Lista de contenidos de PDFs adjuntos extraídos
+    
+    Returns:
+        Lista de Consumption (puede ser vacía), o None si hay error
     """
     ref_date, ref_year = _compute_ref(email_date)
-    prompt = _PROMPT_TEMPLATE.format(body=body.strip(), ref_date=ref_date, ref_year=ref_year)
+    
+    # Combinar cuerpo del email con contenido de PDFs
+    combined_content = body.strip()
+    if pdf_contents:
+        combined_content += "\n\n" + "\n\n═══════════════════════════════════\n\n".join(pdf_contents)
+    
+    prompt = _PROMPT_TEMPLATE.format(body=combined_content, ref_date=ref_date, ref_year=ref_year)
 
     _RESPONSE_SCHEMA = {
         "type": "array",

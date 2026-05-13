@@ -13,6 +13,9 @@ msal>=1.30.0
 # Fase 3 (base de datos PostgreSQL):
 psycopg2-binary>=2.9.9
 
+# Procesamiento de PDFs adjuntos:
+pypdf>=4.0.0
+
 # Dependencias de base ya presentes en el entorno generic
 # (se listan para documentar la versión mínima requerida)
 # pydantic>=2.0

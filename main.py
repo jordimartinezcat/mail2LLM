@@ -12,8 +12,8 @@ from pending_confirmations import confirm_and_remove, save_pending
 
 def _is_confirmation_message(body: str, subject: str) -> bool:
     """
-    Detecta si un mensaje es una respuesta de confirmación.
-    Busca palabras clave como: OK, CONFIRMAR, SÍ, SI, ACEPTAR
+    Detecta si un missatge és una resposta de confirmació.
+    Busca paraules clau com: OK, CONFIRMAR, SÍ, SI, ACEPTAR, TOTS
     """
     if not body:
         return False
@@ -27,6 +27,8 @@ def _is_confirmation_message(body: str, subject: str) -> bool:
         r'\bACEPTAR\b',
         r'\bCONFIRMO\b',
         r'\bACEPTO\b',
+        r'\bTOTS\b',
+        r'\bTODOS\b',
     ]
     
     return any(re.search(pattern, text) for pattern in keywords)
@@ -34,35 +36,35 @@ def _is_confirmation_message(body: str, subject: str) -> bool:
 
 def _extract_confirmation_uid(body: str, raw: str = "", subject: str = "") -> str | None:
     """
-    Extrae el UID de confirmación del subject, body o mensaje raw.
-    Busca patrón: 
-      - En subject: [CONFIRMACIÓN #135]
-      - En body/raw: (ID de confirmación: 135)
+    Extreu el UID de confirmació del subject, body o missatge raw.
+    Busca patró: 
+      - En subject: [CONFIRMACIÓ #135]
+      - En body/raw: (ID de confirmació: 135)
     
     Args:
-        body: Cuerpo de texto plano del mensaje
-        raw: Mensaje raw completo (opcional, para buscar en partes citadas)
-        subject: Asunto del mensaje (prioritario)
+        body: Cos de text pla del missatge
+        raw: Missatge raw complet (opcional, per buscar en parts citades)
+        subject: Assumpte del missatge (prioritari)
     
     Returns:
-        UID como string, o None si no se encuentra
+        UID com a string, o None si no es troba
     """
-    # PRIORIDAD 1: Buscar en el subject (más confiable)
+    # PRIORITAT 1: Buscar en el subject (més fiable)
     if subject:
-        # Patrón: [CONFIRMACIÓN #135] o RE: [CONFIRMACIÓN #135]
-        match = re.search(r'\[CONFIRMACI[ÓO]N\s+#(\d+)\]', subject, re.IGNORECASE)
+        # Patró: [CONFIRMACIÓ #135] o RE: [CONFIRMACIÓ #135]
+        match = re.search(r'\[CONFIRMACI[ÓO]\s+#(\d+)\]', subject, re.IGNORECASE)
         if match:
             return match.group(1)
     
-    # PRIORIDAD 2: Buscar en el body
+    # PRIORITAT 2: Buscar en el body
     if body:
-        match = re.search(r'\(ID de confirmación:\s*(\d+)\)', body, re.IGNORECASE)
+        match = re.search(r'\(ID de confirmaci[óo]:\s*(\d+)\)', body, re.IGNORECASE)
         if match:
             return match.group(1)
     
-    # PRIORIDAD 3: Buscar en el mensaje raw completo
+    # PRIORITAT 3: Buscar en el missatge raw complet
     if raw:
-        match = re.search(r'\(ID de confirmación:\s*(\d+)\)', raw, re.IGNORECASE)
+        match = re.search(r'\(ID de confirmaci[óo]:\s*(\d+)\)', raw, re.IGNORECASE)
         if match:
             return match.group(1)
     
@@ -112,27 +114,31 @@ def main() -> None:
                     msg["sender"],
                 )
 
-                if not msg["body"]:
-                    logger.warning("Mensaje [%s] sin cuerpo de texto, omitido", uid)
+                # Validar que tenga contenido (cuerpo o PDFs adjuntos)
+                pdf_contents = msg.get("pdf_contents", [])
+                has_content = bool(msg["body"]) or bool(pdf_contents)
+                
+                if not has_content:
+                    logger.warning("Mensaje [%s] sin cuerpo de texto ni PDFs adjuntos, omitido", uid)
                     failed_messages.append({
                         "uid": uid,
                         "subject": msg["subject"],
                         "sender": msg["sender"],
                         "date": msg.get("date", ""),
-                        "body": "(sin cuerpo de texto)",
-                        "reason": "Sin cuerpo de texto",
+                        "body": "(sin contenido)",
+                        "reason": "Sin cuerpo de texto ni PDFs adjuntos",
                     })
                     reader.move_message(uid, config.email.folder_errors)
                     errors += 1
                     continue
 
                 # ═══════════════════════════════════════════════════════════════
-                # DETECTAR SI ES UNA CONFIRMACIÓN
+                # DETECTAR SI ÉS UNA CONFIRMACIÓ
                 # ═══════════════════════════════════════════════════════════════
                 if _is_confirmation_message(msg["body"], msg["subject"]):
-                    logger.info("Mensaje [%s] detectado como CONFIRMACIÓN", uid)
+                    logger.info("Missatge [%s] detectat com a CONFIRMACIÓ", uid)
                     
-                    # Buscar UID original: primero en subject, luego en body/raw
+                    # Buscar UID original: primer en subject, després en body/raw
                     original_uid = _extract_confirmation_uid(
                         msg["body"], 
                         msg.get("raw", ""),
@@ -141,7 +147,7 @@ def main() -> None:
                     
                     if not original_uid:
                         logger.warning(
-                            "Confirmación [%s] sin UID válido — movido a errores",
+                            "Confirmació [%s] sense UID vàlid — mogut a errors",
                             uid,
                         )
                         failed_messages.append({
@@ -150,14 +156,55 @@ def main() -> None:
                             "sender": msg["sender"],
                             "date": msg.get("date", ""),
                             "body": msg["body"],
-                            "reason": "Confirmación sin UID de referencia",
+                            "reason": "Confirmació sense UID de referència",
                         })
                         reader.move_message(uid, config.email.folder_errors)
                         errors += 1
                         continue
                     
-                    # Recuperar consumos pendientes
-                    consumptions_data = confirm_and_remove(original_uid)
+                    # Detectar si és confirmació selectiva (CONFIRMAR 1,3,5) o total (TOTS)
+                    # Buscar solo en las primeras líneas del body (antes del texto citado)
+                    body_lines = msg["body"].split("\n")
+                    first_lines = "\n".join(body_lines[:10]).upper()  # Primeras 10 líneas
+                    text = first_lines + " " + (msg["subject"] or "").upper()
+                    line_numbers = None
+                    
+                    logger.debug("Analizando confirmación - Primeras líneas: %s", first_lines[:200])
+                    
+                    # Buscar patró: "CONFIRMAR 1,3,5" o "1,2" o "1 2 3"
+                    # Primero buscar "CONFIRMAR" seguido de números
+                    match = re.search(r'CONFIRMAR\s+([\d,\s]+?)(?:\s|$)', text)
+                    if match:
+                        logger.debug("Match encontrado con 'CONFIRMAR': %s", match.group(1))
+                    
+                    if not match:
+                        # Si no hay "CONFIRMAR", buscar línea que comience con números y comas
+                        # Más flexible: acepta línea que empiece con dígitos
+                        match = re.search(r'^\s*([\d,\s]+?)\s*$', first_lines, re.MULTILINE)
+                        if match:
+                            logger.debug("Match encontrado (solo números): %s", match.group(1))
+                    
+                    if match and "TOTS" not in text and "TODOS" not in text and "OK" not in text:
+                        # Extreure números (separats per comes o espais)
+                        numbers_str = match.group(1).replace(" ", ",").strip(",")
+                        try:
+                            line_numbers = [int(n.strip()) for n in numbers_str.split(",") if n.strip() and n.strip().isdigit()]
+                            if line_numbers:  # Solo si hay números válidos
+                                logger.info("Confirmació SELECTIVA: línies %s", line_numbers)
+                            else:
+                                logger.warning("Números extrets però buits, assumint confirmació total")
+                        except ValueError:
+                            logger.warning("Format de números invàlid: %s, assumint confirmació total", numbers_str)
+                    
+                    if not line_numbers:
+                        if "TOTS" in text or "TODOS" in text or "OK" in text or "SÍ" in text or "SI" in text or "ACEPTAR" in text:
+                            logger.info("Confirmació TOTAL (paraula clau detectada)")
+                        else:
+                            logger.warning("No s'ha detectat confirmació selectiva ni total clara - assumint TOTAL per defecte")
+                    
+                    # Recuperar consums pendents (totals o selectius)
+                    from pending_confirmations import confirm_and_remove_selective
+                    consumptions_data = confirm_and_remove_selective(original_uid, line_numbers)
                     
                     if not consumptions_data:
                         logger.warning(
@@ -251,9 +298,18 @@ def main() -> None:
                     continue
 
                 # ═══════════════════════════════════════════════════════════════
-                # MENSAJE NORMAL: EXTRAER CONSUMOS
+                # MENSAJE NORMAL: EXTRAER CONSUMOS (email + PDFs)
                 # ═══════════════════════════════════════════════════════════════
-                consumptions = extract_consumption(msg["body"], config.llm, msg["date"])
+                pdf_contents = msg.get("pdf_contents", [])
+                if pdf_contents:
+                    logger.info("Mensaje [%s] con %d PDF(s) adjunto(s)", uid, len(pdf_contents))
+                
+                consumptions = extract_consumption(
+                    msg["body"], 
+                    config.llm, 
+                    msg["date"],
+                    pdf_contents=pdf_contents
+                )
 
                 if consumptions is None:
                     logger.error(
