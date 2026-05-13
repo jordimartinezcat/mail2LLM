@@ -34,22 +34,59 @@ def _decode_header_value(value: str | None) -> str:
 
 
 def _extract_plain_body(msg: Message) -> str:
-    """Extrae el cuerpo en texto plano de un mensaje (soporta multipart)."""
+    """
+    Extrae el cuerpo en texto plano de un mensaje (soporta multipart).
+    Si no hay text/plain, intenta extraer de text/html.
+    """
+    plain_text = None
+    html_text = None
+    
     if msg.is_multipart():
         for part in msg.walk():
-            if (
-                part.get_content_type() == "text/plain"
-                and "attachment" not in str(part.get("Content-Disposition", ""))
-            ):
-                charset = part.get_content_charset() or "utf-8"
-                payload = part.get_payload(decode=True)
-                if payload:
-                    return _clean_body(payload.decode(charset, errors="replace"))
-        return ""
+            if "attachment" in str(part.get("Content-Disposition", "")):
+                continue
+                
+            content_type = part.get_content_type()
+            charset = part.get_content_charset() or "utf-8"
+            payload = part.get_payload(decode=True)
+            
+            if not payload:
+                continue
+            
+            decoded = payload.decode(charset, errors="replace")
+            
+            # Preferir text/plain
+            if content_type == "text/plain":
+                plain_text = decoded
+                break  # Ya tenemos lo que queremos
+            elif content_type == "text/html" and not html_text:
+                html_text = decoded
     else:
+        # Mensaje simple (no multipart)
+        content_type = msg.get_content_type()
         charset = msg.get_content_charset() or "utf-8"
         payload = msg.get_payload(decode=True)
-        return _clean_body(payload.decode(charset, errors="replace")) if payload else ""
+        
+        if payload:
+            decoded = payload.decode(charset, errors="replace")
+            if content_type == "text/plain":
+                plain_text = decoded
+            elif content_type == "text/html":
+                html_text = decoded
+    
+    # Devolver texto plano si existe, sino extraer de HTML
+    if plain_text:
+        return _clean_body(plain_text)
+    elif html_text:
+        # Extraer texto básico de HTML (eliminar tags)
+        import re
+        text = re.sub(r'<style[^>]*>.*?</style>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', ' ', text)  # Eliminar todos los tags
+        text = re.sub(r'\s+', ' ', text)  # Colapsar espacios
+        return _clean_body(text.strip())
+    
+    return ""
 
 
 def _extract_pdf_attachments(msg: Message) -> list[str]:
