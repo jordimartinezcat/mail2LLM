@@ -76,7 +76,7 @@ def _extract_plain_body(msg: Message) -> str:
     
     # Devolver texto plano si existe, sino extraer de HTML
     if plain_text:
-        return _clean_body(plain_text)
+        return _clean_body(_remove_email_thread(plain_text))
     elif html_text:
         # Extraer texto básico de HTML (eliminar tags)
         import re
@@ -84,7 +84,7 @@ def _extract_plain_body(msg: Message) -> str:
         text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<[^>]+>', ' ', text)  # Eliminar todos los tags
         text = re.sub(r'\s+', ' ', text)  # Colapsar espacios
-        return _clean_body(text.strip())
+        return _clean_body(_remove_email_thread(text.strip()))
     
     return ""
 
@@ -160,6 +160,41 @@ def _clean_body(text: str) -> str:
     # Colapsar líneas en blanco múltiples en una sola
     result = _re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned))
     return result.strip()
+
+
+def _remove_email_thread(text: str) -> str:
+    """
+    Elimina el historial de threads/forwards de un email.
+    Corta todo después de patrones típicos de reenvío/respuesta.
+    """
+    import re as _re
+    
+    # Patrones que indican inicio de un email anterior en el thread
+    thread_patterns = [
+        r'\n\s*[-_]{5,}\s*Original Message\s*[-_]{5,}',  # Outlook: -----Original Message-----
+        r'\n\s*De:\s+[^\n]+\n\s*Enviado el:\s+',  # Español: De: X\nEnviado el: 
+        r'\n\s*From:\s+[^\n]+\n\s*Sent:\s+',      # Inglés: From: X\nSent:
+        r'\n\s*El\s+.+?escribió:',           # Gmail español: El ... escribió:
+        r'\n\s*On\s+.+?wrote:',              # Gmail inglés: On ... wrote:
+    ]
+    
+    # Buscar el primer patrón que coincida
+    earliest_match = len(text)
+    for pattern in thread_patterns:
+        match = _re.search(pattern, text, _re.IGNORECASE | _re.MULTILINE | _re.DOTALL)
+        if match:
+            earliest_match = min(earliest_match, match.start())
+    
+    # Si encontramos un thread, cortar ahí
+    if earliest_match < len(text):
+        text = text[:earliest_match].rstrip()
+    
+    # Limitar longitud máxima (seguridad adicional)
+    max_length = 5000  # ~5KB es suficiente para consumos reales (reducido de 10KB)
+    if len(text) > max_length:
+        text = text[:max_length] + "\n[... contenido truncado ...]"
+    
+    return text
 
 
 # ---------------------------------------------------------------------------

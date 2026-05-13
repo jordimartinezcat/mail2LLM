@@ -13,12 +13,22 @@ from pending_confirmations import confirm_and_remove, save_pending
 def _is_confirmation_message(body: str, subject: str) -> bool:
     """
     Detecta si un missatge és una resposta de confirmació.
-    Busca paraules clau com: OK, CONFIRMAR, SÍ, SI, ACEPTAR, TOTS
+    Debe ser un mensaje CORTO (< 300 caracteres) con palabras clave específicas.
     """
     if not body:
         return False
     
+    # Si el subject tiene [CONFIRMACIÓ #XXX], es claramente una confirmación
+    if subject and re.search(r'\[CONFIRMACI[ÓO]N?\s+#\d+\]', subject, re.IGNORECASE):
+        return True
+    
+    # Si el body es muy largo (>300 chars), probablemente NO es una confirmación simple
+    # (las confirmaciones son respuestas cortas: "OK", "CONFIRMAR", etc.)
+    if len(body) > 300:
+        return False
+    
     text = (body + " " + (subject or "")).upper()
+    
     keywords = [
         r'\bOK\b',
         r'\bCONFIRMAR\b',
@@ -345,6 +355,38 @@ def main() -> None:
                     reader.move_message(uid, config.email.folder_errors)
                     errors += 1
                     continue
+
+                # Deduplicar: Si hay múltiples consumos de la misma empresa,
+                # mantener solo el más reciente (útil para emails con threads)
+                from datetime import datetime
+                from collections import defaultdict
+                
+                if len(consumptions) > 1:
+                    # Agrupar por empresa
+                    by_empresa = defaultdict(list)
+                    for c in consumptions:
+                        by_empresa[c.empresa].append(c)
+                    
+                    # Si hay empresas con múltiples consumos, mantener solo el más reciente
+                    deduplicated = []
+                    for empresa, consumos in by_empresa.items():
+                        if len(consumos) > 1:
+                            # Ordenar por fecha (más reciente primero)
+                            consumos_sorted = sorted(
+                                consumos, 
+                                key=lambda x: datetime.strptime(x.fecha, "%Y-%m-%d"),
+                                reverse=True
+                            )
+                            most_recent = consumos_sorted[0]
+                            logger.info(
+                                "  Deduplicación: %s tiene %d consumos, usando el más reciente: %s (%.2f %s)",
+                                empresa, len(consumos), most_recent.fecha, most_recent.valor, most_recent.unidades
+                            )
+                            deduplicated.append(most_recent)
+                        else:
+                            deduplicated.append(consumos[0])
+                    
+                    consumptions = deduplicated
 
                 # Verificar que todos los registros tienen los campos completos
                 incompletos = [

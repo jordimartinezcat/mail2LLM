@@ -1,1 +1,101 @@
-{}
+{
+  "163": {
+    "subject": "Consumo de agua - Abril 2026 - TEST HTML",
+    "sender": "consums@ccaait.cat",
+    "date": "Tue, 12 May 2026 14:31:38 +0000",
+    "body": "Estimado equipo,\n\nLes informo sobre los consumos de agua del mes de abril de 2026:\n\n┌─────────────────────────┬──────────────┐\n│ Empresa                 │ Consumo (m³) │\n├─────────────────────────┼──────────────┤\n│ ACME Industrias SA      │    1.250,50  │\n│ Beta Solutions          │      342,00  │\n│ Gamma Tech Ltd          │      875,25  │\n└─────────────────────────┴──────────────┘\n\nFecha de referencia: 30/04/2026\n\nPor favor, procesen estos datos a la mayor brevedad.\n\nSaludos cordiales,\nSistema automático de facturación",
+    "timestamp": "2026-05-12T16:31:56.402283",
+    "consumptions": [
+      {
+        "fecha": "2026-04-30",
+        "empresa": "ACME Industrias SA",
+        "valor": 1250.5,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2026-04-30",
+        "empresa": "Beta Solutions",
+        "valor": 342.0,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2026-04-30",
+        "empresa": "Gamma Tech Ltd",
+        "valor": 875.25,
+        "unidades": "m3"
+      }
+    ]
+  },
+  "165": {
+    "subject": "Consumo de agua - Abril 2026 - TEST HTML",
+    "sender": "consums@ccaait.cat",
+    "date": "Tue, 12 May 2026 14:41:32 +0000",
+    "body": "Estimado equipo,\n\nLes informo sobre los consumos de agua del mes de abril de 2026:\n\n┌─────────────────────────┬──────────────┐\n│ Empresa                 │ Consumo (m³) │\n├─────────────────────────┼──────────────┤\n│ ACME Industrias SA      │    1.250,50  │\n│ Beta Solutions          │      342,00  │\n│ Gamma Tech Ltd          │      875,25  │\n└─────────────────────────┴──────────────┘\n\nFecha de referencia: 30/04/2026\n\nPor favor, procesen estos datos a la mayor brevedad.\n\nSaludos cordiales,\nSistema automático de facturación",
+    "timestamp": "2026-05-12T16:41:53.138912",
+    "consumptions": [
+      {
+        "fecha": "2026-04-30",
+        "empresa": "Beta Solutions",
+        "valor": 342.0,
+        "unidades": "m3"
+      }
+    ]
+  },
+  "247": {
+    "subject": "RV: Facturación Consumo agua Messer",
+    "sender": "Jordi Martinez Abelló <jmartinez@ccaait.cat>",
+    "date": "Wed, 13 May 2026 09:45:37 +0200",
+    "body": "Buenos días, &nbsp; Os paso la lectura del contador del agua de aporte a Messer El Morell: &nbsp; Lectura actual (30/04/2026): 1069.405 m3 Lectura anterior (01/04/2026): 1053.010 m3 &nbsp; Consumo ABRIL 2026: 16.395 m3 &nbsp; Muchas gracias, saludos Yolanda &nbsp; De: Gutierrez, Yolanda Enviado el: miércoles, 1 de abril de 2026 9:39 Para: 'sara.callau@repsol.com' &lt; sara.callau@repsol.com &gt;; 'amartorell@ccaait.cat' &lt; amartorell@ccaait.cat &gt; CC: 'malberto@repsol.com' &lt; malberto@repsol.com &gt;; 'meritxell.galea@repsol.com' &lt; meritxell.galea@repsol.com &gt;; 'lgutierrez@ccaait.cat' &lt; lgutierrez@ccaait.cat &gt;; 'sjbaudinoc@repsol.com' &lt; sjbaudinoc@repsol.com &gt;; 'vgarciara@repsol.com' &lt; vgarciara@repsol.com &gt;; 'marevillav@repsol.com' &lt; marevillav@repsol.com &gt;; 'psolanst@repsol.com' &lt; psolanst@repsol.com &gt;; 'beatriz.villarreal@repsol.com' &lt; beatriz.villarreal@repsol.com &gt;; Plana, Pere &lt; pere.plana@messergroup.com &gt;; Montoro, Jose &lt; Jose.Montoro@messergroup.com &gt;; Fernandez, David &lt; David.Fernandez@messergroup.com &gt;; Yepes, Pedro &lt; Pedro.Yepes@messergroup.com &gt;; 'ESPADERO BERZOSA, ARANCHA' &lt; arespaderobe@repsol.com &gt;; 'MARTIN CABEZUDO, YOLANDA' &lt; ymartinc@repsol.com &gt;; 'PORRO GILISBARS, ROGER' &lt; roger.porro@repsol.com &gt;; 'MARCEN DE LA RICA, ELOI' &lt; eloi.marcen@repsol.com &gt;; 'PORRAS GONZALEZ, MARTA' &lt; m.porras.gonzalez@repsol.com &gt; Asunto: RE: Facturación Consumo agua Messer &nbsp; Buenos días, &nbsp; Os paso la lectura del contador del agua de aporte a Messer El Morell: &nbsp; Lectura actual (01/04/2026): 1053.010 m3 Lectura anterior (02/03/2026): 1035.580 m3 &nbsp; Consumo MARZO 2026: 17.430 m3 &nbsp; Muchas gracias, saludos Yolanda &nbsp; De: Gutierrez, Yolanda Enviado el: lunes, 2 de marzo de 2026 9:22 Para: 'sara.callau@repsol.com' &lt; sara.callau@repsol.com &gt;; 'amartorell@ccaait.cat' &lt; amartorell@ccaait.cat &gt; CC: 'malberto@repsol.com' &lt; malberto@repsol.com &gt;; 'meritxell.galea@repsol.com' &lt; meritxell.galea@repsol.com &gt;; 'lgutierrez@ccaait.cat' &lt; lgutierrez@ccaait.cat &gt;; 'sjbaudinoc@repsol.com' &lt; sjbaudinoc@repsol.com &gt;; 'vgarciara@repsol.com' &lt; vgarciara@repsol.com &gt;; 'marevillav@repsol.com' &lt; marevillav@repsol.com &gt;; 'psolanst@repsol.com' &lt; psolanst@repsol.com &gt;; 'beatriz.villarreal@repsol.com' &lt; beatriz.villarreal@repsol.com &gt;; Plana, Pere &lt; pere.plana@messergroup.com &gt;; Montoro, Jose &lt; Jose.Montoro@messergroup.com &gt;; Fernandez, David &lt; David.Fernandez@messergroup.com &gt;; 'ESPADERO BERZOSA, ARANCHA' &lt; arespaderobe@repsol.com &gt;; 'MARTIN CABEZUDO, YOLANDA' &lt; ymartinc@repsol.com &gt;; 'PORRO GILISBARS, ROGER' &lt; roger.porro@repsol.com &gt;; 'MARCEN DE LA RICA, ELOI' &lt; eloi.marcen@repsol.com &gt;; 'PORRAS GONZALEZ, MARTA' &lt; m.porras.gonzalez@repsol.com &gt; Asunto: RE: Facturación Consumo agua Messer &nbsp; Buenos días, &nbsp; Os paso la lectura del contador del agua de aporte a Messer El Morell: &nbsp; Lectura actual (02/03/2026): 1035.580 m3 Lectura anterior (02/02/2026): 1016.310 m3 &nbsp; Consumo FEBRERO 2026: &nbsp;19.270 m3 &nbsp; Muchas gracias, saludos Yolanda &nbsp; De: Gutierrez, Yolanda Enviado el: lunes, 2 de febrero de 2026 8:20 Para: sara.callau@repsol.com ; amartorell@ccaait.cat CC: malberto@repsol.com ; meritxell.galea@repsol.com ; lgutierrez@ccaait.cat ; sjbaudinoc@repsol.com ; vgarciara@repsol.com ; marevillav@repsol.com ; psolanst@repsol.com ; beatriz.villarreal@repsol.com ; Plana, Pere &lt; pere.plana@messergroup.com &gt;; Montoro, Jose &lt; Jose.Montoro@messergroup.com &gt;; Fernandez, David &lt; David.Fernandez@messergroup.com &gt;; ESPADERO BERZOSA, ARANCHA &lt; arespaderobe@repsol.com &gt;; MARTIN CABEZUDO, YOLANDA &lt; ymartinc@repsol.com &gt;; PORRO GILISBARS, ROGER &lt; roger.porro@repsol.com &gt;; MARCEN DE LA RICA, ELOI &lt; eloi.marcen@repsol.com &gt;; PORRAS GONZALEZ, MARTA &lt; m.porras.gonzalez@repsol.com &gt; Asunto: RE: Facturación Consumo agua Messer &nbsp; Buenos días, &nbsp; Os paso la lectura del contador del agua de aporte a Messer El Morell: &nbsp; Lectura actual (02/02/2026): 1016.310 m3 Lectura anterior (31/12/2025): 993.750 m3 &nbsp; Consumo ENERO 2026: &nbsp;22.560 m3 &nbsp; Muchas gracias, saludos Yolanda &nbsp; De: Gutierrez, Yolanda Enviado el: miércoles, 31 de diciembre de 2025 10:09 Para: sara.callau@repsol.com ; amartorell@ccaait.cat CC: malberto@repsol.com ; meritxell.galea@repsol.com ; lgutierrez@ccaait.cat ; sjbaudinoc@repsol.com ; vgarciara@repsol.com ; marevillav@repsol.com ; psolanst@repsol.com ; beatriz.villarreal@repsol.com ; Plana, Pere &lt; pere.plana@messergroup.com &gt;; Montoro, Jose &lt; Jose.Montoro@messergroup.com &gt;; Fernandez, David &lt; David.Fernandez@messergroup.com &gt;; ESPADERO BERZOSA, ARANCHA &lt; arespaderobe@repsol.com &gt;; MARTIN CABEZUDO, YOLANDA &lt; ymartinc@repsol.com &gt;; PORRO GILISBARS, ROGER &lt; roger.porro@repsol.com &gt;; MARCEN DE LA RICA, ELOI &lt; eloi.marcen@repsol.com &gt;; PORRAS GONZALEZ, MARTA &lt; m.porras.gonzalez@repsol.com &gt; Asunto: RE: Facturación Consumo agua Messer &nbsp; Buenos días, &nbsp; Os paso la lectura del contador del agua de aporte a Messer El Morell: &nbsp; Lectura actual (31/12/2025): 993.750 m3 Lectura anterior (01/12/25): &nbsp;975.674 m3 &nbsp; Consumo DICIEMBRE 2025: 18.076 m3 &nbsp; Muchas gracias, saludos Yolanda &nbsp; De: Gutierrez, Yolanda Enviado el: lunes, 1 de diciembre de 2025 9:19 Para: 'sara.callau@repsol.com' &lt; sara.callau@repsol.com &gt;; 'amartorell@ccaait.cat' &lt; amartorell@ccaait.cat &gt; CC: 'malberto@repsol.com' &lt; malberto@repsol.com &gt;; 'meritxell.galea@repsol.com' &lt; meritxell.galea@repsol.com &gt;; 'lgutierrez@ccaait.cat' &lt; lgutierrez@ccaait.cat &gt;; 'sjbaudinoc@repsol.com' &lt; sjbaudinoc@repsol.com &gt;; 'vgarciara@repsol.com' &lt; vgarciara@repsol.com &gt;; 'marevillav@repsol.com' &lt; marevillav@repsol.com &gt;; 'psolanst@repsol.com' &lt; psolanst@repsol.com &gt;; 'beatriz.villarreal@repsol.com' &lt; beatriz.villarreal@repsol.com &gt;; Plana, Pere &lt; pere.plana@messergroup.com &gt;; Montoro, Jose &lt; Jose.Montoro@messergroup.com &gt;; Fernandez, David &lt; David.Fernandez@messergroup.com &gt;; 'ESPADERO BERZOSA, ARANCHA' &lt; arespaderobe@repsol.com &gt;; 'MARTIN CABEZUDO, YOLANDA' &lt; ymartinc@repsol.com &gt;; 'PORRO GILISBARS, ROGER' &lt; roger.porro@repsol.com &gt;; 'MARCEN DE LA RICA, ELOI' &lt; eloi.marcen@repsol.com &gt;; 'PORRAS GONZALEZ, MARTA' &lt; m.porras.gonzalez@repsol.com &gt; Asunto: RE: Facturación Consumo agua Messer &nbsp; Buenos días, &nbsp; Os paso la lectura del contador del agua de aporte a Messer El Morell: &nbsp; Lectura actual (01/12/25): &nbsp;975.674 m3 Lectura anterior (31/10/25): 950.810 m3 &nbsp; Consumo NOVIEMBRE 2025: 24.864 m3 &nbsp; Muchas gracias, saludos Yolanda &nbsp; De: Gutierrez, Yolanda Enviado el: viernes, 31 de octubre de 2025 14:34 Para: sara.callau@repsol.com ; amartorell@ccaait.cat CC: malberto@repsol.com ; meritxell.galea@repsol.com ; lgutierrez@ccaait.cat ; sjbaudinoc@repsol.com ; vgarciara@repsol.com ; marevillav@repsol.com ; psolanst@repsol.com ; beatriz.villarreal@repsol.com ; Plana, Pere &lt; pere.plana@messergroup.com &gt;; Montoro, Jose &lt; Jose.Montoro@messergroup.com &gt;; Fernandez, David &lt; David.Fernandez@messergroup.com &gt;; ESPADERO BERZOSA, ARANCHA &lt; arespaderobe@repsol.com &gt;; MARTIN CABEZUDO, YOLANDA &lt; ymartinc@repsol.com &gt;; PORRO GILISBARS, ROGER &lt; roger.porro@repsol.com &gt;; MARCEN DE LA RICA, ELOI &lt; eloi.marcen@repsol.com &gt;; PORRAS GONZALEZ, MARTA &lt; m.porras.gonzalez@repsol.com &gt; Asunto: RE: Facturación Consumo agua Messer &nbsp; Buenos días, &nbsp; Os paso la lectura del contador del agua de aporte a Messer El Morell: &nbsp; Lectura actual (31/10/25): 950.810 m3 Lectura anterior (01/10/25): 924.500 m3 &nbsp; Consumo OCTUBRE 2025: 26.310 m3 &nbsp; Muchas gracias, saludos Yolanda &nbsp; De: Gutierrez, Yolanda Enviado el: miércoles, 1 de octubre de 2025 8:20 Para: 'sara.callau@repsol.com' &lt; sara.callau@repsol.com &gt;; 'amartorell@ccaait.cat' &lt; amartorell@ccaait.cat &gt; CC: 'malberto@repsol.com' &lt; malberto@repsol.com &gt;; 'meritxell.galea@repsol.com' &lt; meritxell.galea@repsol.com &gt;; 'lgutierrez@ccaait.cat' &lt; lgutierrez@ccaait.cat &gt;; 'sjbaudinoc@repsol.com' &lt; sjbaudinoc@repsol.com &gt;; 'vgarciara@repsol.com' &lt; vgarciara@repsol.com &gt;; 'marevillav@repsol.com' &lt; marevillav@repsol.com &gt;; 'psolanst@repsol.com' &lt; psolanst@repsol.com &gt;; 'beatriz.villarreal@repsol.com' &lt; beatriz.villarreal@repsol.com &gt;; Plana, Pere &lt; pere.plana@messergroup.com &gt;; Montoro, Jose &lt; Jose.Montoro@messergroup.com &gt;; Fernandez, David &lt; David.Fernandez@messergroup.com &gt;; 'ESPADERO BERZOSA, ARANCHA' &lt; arespaderobe@repsol.com &gt;; 'MARTIN CABEZUDO, YOLANDA' &lt; ymartinc@repsol.com &gt;; 'PORRO GILISBARS, ROGER' &lt; roger.porro@repsol.com &gt;; 'MARCEN DE LA RICA, ELOI' &lt; eloi.marcen@repsol.com &gt;; 'PORRAS GONZALEZ, MARTA' &lt; m.porras.gonzalez@repsol.com &gt; Asunto: RE: Facturación Consumo agua Messer &nbsp; Buenos días, &nbsp; Os paso la lectura del contador del agua de aporte a Messer El Morell: &nbsp; Lectura actual (01/10/25): 924.500 m3 Lectura anterior (01/09/25): 904.353 m3 &nbsp; Consumo SEPTIEMBRE 2025: &nbsp;20.147 m3 &nbsp; Muchas gracias, saludos Yolanda &nbsp; De: Gutierrez, Yolanda Enviado el: lunes, 1 de septiembre de 2025 9:29 Para: sara.callau@repsol.com ; amartorell@ccaait.cat CC: malberto@repsol.com ; meritxell.galea@repsol.com ; lgutierrez@ccaait.cat ; sjbaudinoc@repsol.com ; vgarciara@repsol.com ; marevillav@repsol.com ; psolanst@repsol.com ; beatriz.villarreal@repsol.com ; Plana, Pere &lt; pere.plana@messergroup.com &gt;; Montoro, Jose &lt; Jose.Montoro@messergroup.com &gt;; Fernandez, David &lt; David.Fernandez@messergroup.com &gt;; ESPADERO BERZOSA, ARANCHA &lt; arespaderobe@repsol.com &\n[... contenido truncado ...]",
+    "timestamp": "2026-05-13T09:46:06.937164",
+    "consumptions": [
+      {
+        "fecha": "2026-04-30",
+        "empresa": "Messer El Morell",
+        "valor": 16.395,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2026-03-31",
+        "empresa": "Messer El Morell",
+        "valor": 17.43,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2026-02-28",
+        "empresa": "Messer El Morell",
+        "valor": 19.27,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2026-01-31",
+        "empresa": "Messer El Morell",
+        "valor": 22.56,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2025-12-31",
+        "empresa": "Messer El Morell",
+        "valor": 18.076,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2025-11-30",
+        "empresa": "Messer El Morell",
+        "valor": 24.864,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2025-10-31",
+        "empresa": "Messer El Morell",
+        "valor": 26.31,
+        "unidades": "m3"
+      },
+      {
+        "fecha": "2025-09-30",
+        "empresa": "Messer El Morell",
+        "valor": 20.147,
+        "unidades": "m3"
+      }
+    ]
+  }
+}
