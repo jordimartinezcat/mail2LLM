@@ -136,6 +136,7 @@ def main() -> None:
                         "sender": msg["sender"],
                         "date": msg.get("date", ""),
                         "body": "(sin contenido)",
+                        "raw": msg.get("raw", ""),
                         "reason": "Sin cuerpo de texto ni PDFs adjuntos",
                     })
                     reader.move_message(uid, config.email.folder_errors)
@@ -166,6 +167,7 @@ def main() -> None:
                             "sender": msg["sender"],
                             "date": msg.get("date", ""),
                             "body": msg["body"],
+                            "raw": msg.get("raw", ""),
                             "reason": "Confirmació sense UID de referència",
                         })
                         reader.move_message(uid, config.email.folder_errors)
@@ -228,6 +230,7 @@ def main() -> None:
                             "sender": msg["sender"],
                             "date": msg.get("date", ""),
                             "body": msg["body"],
+                            "raw": msg.get("raw", ""),
                             "reason": f"Sin consumos pendientes para UID {original_uid}",
                         })
                         reader.move_message(uid, config.email.folder_errors)
@@ -271,6 +274,7 @@ def main() -> None:
                                 "sender": msg["sender"],
                                 "date": msg.get("date", ""),
                                 "body": msg["body"],
+                                "raw": msg.get("raw", ""),
                                 "reason": f"Error BD: {db_exc}",
                             })
                             reader.move_message(uid, config.email.folder_errors)
@@ -290,6 +294,7 @@ def main() -> None:
                             "sender": msg["sender"],
                             "date": msg.get("date", ""),
                             "body": msg["body"],
+                            "raw": msg.get("raw", ""),
                             "reason": f"Empresa(s) no identificada(s): {', '.join(db_not_found)}",
                         })
                         reader.move_message(uid, config.email.folder_errors)
@@ -331,6 +336,7 @@ def main() -> None:
                         "sender": msg["sender"],
                         "date": msg.get("date", ""),
                         "body": msg["body"],
+                        "raw": msg.get("raw", ""),
                         "reason": "Error al llamar al LLM o respuesta no parseable",
                     })
                     reader.move_message(uid, config.email.folder_errors)
@@ -350,6 +356,7 @@ def main() -> None:
                         "sender": msg["sender"],
                         "date": msg.get("date", ""),
                         "body": msg["body"],
+                        "raw": msg.get("raw", ""),
                         "reason": "Sin datos de consumo detectados",
                     })
                     reader.move_message(uid, config.email.folder_errors)
@@ -409,6 +416,7 @@ def main() -> None:
                         "sender": msg["sender"],
                         "date": msg.get("date", ""),
                         "body": msg["body"],
+                        "raw": msg.get("raw", ""),
                         "reason": (
                             f"{len(incompletos)} registro(s) incompleto(s): "
                             + "; ".join(
@@ -462,6 +470,7 @@ def main() -> None:
                         "sender": msg["sender"],
                         "date": msg.get("date", ""),
                         "body": msg["body"],
+                        "raw": msg.get("raw", ""),
                         "reason": f"Error al procesar: {exc}",
                     })
                     reader.move_message(uid, config.email.folder_errors)

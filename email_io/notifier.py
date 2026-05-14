@@ -87,15 +87,33 @@ def send_error_notification(
             for c in (m["subject"] or "sin_asunto")
         )[:50].strip()
         filename = f"error_{m['uid']}_{subject_safe}.txt"
-        content = (
-            f"UID    : {m['uid']}\n"
-            f"Asunto : {m['subject'] or '(sin asunto)'}\n"
-            f"De     : {m['sender'] or '?'}\n"
-            f"Fecha  : {m['date'] or '?'}\n"
-            f"Motivo : {m['reason']}\n"
-            f"{'=' * 60}\n\n"
-            f"{m['body'] or '(sin cuerpo)'}"
-        )
+        
+        # Usar el mensaje RAW completo si está disponible, sino el body procesado
+        raw_content = m.get("raw", "")
+        if raw_content:
+            content = (
+                f"UID    : {m['uid']}\n"
+                f"Asunto : {m['subject'] or '(sin asunto)'}\n"
+                f"De     : {m['sender'] or '?'}\n"
+                f"Fecha  : {m['date'] or '?'}\n"
+                f"Motivo : {m['reason']}\n"
+                f"{'=' * 60}\n"
+                f"CORREO COMPLETO (RAW):\n"
+                f"{'=' * 60}\n\n"
+                f"{raw_content}"
+            )
+        else:
+            # Fallback al body procesado si no hay raw
+            content = (
+                f"UID    : {m['uid']}\n"
+                f"Asunto : {m['subject'] or '(sin asunto)'}\n"
+                f"De     : {m['sender'] or '?'}\n"
+                f"Fecha  : {m['date'] or '?'}\n"
+                f"Motivo : {m['reason']}\n"
+                f"{'=' * 60}\n\n"
+                f"{m['body'] or '(sin cuerpo)'}"
+            )
+        
         part = MIMEBase("application", "octet-stream")
         part.set_payload(content.encode("utf-8"))
         encoders.encode_base64(part)

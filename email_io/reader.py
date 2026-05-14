@@ -164,33 +164,98 @@ def _clean_body(text: str) -> str:
 
 def _remove_email_thread(text: str) -> str:
     """
-    Elimina el historial de threads/forwards de un email.
-    Corta todo después de patrones típicos de reenvío/respuesta.
+    Elimina correos antiguos de threads/forwards.
+    Mantiene solo los correos de los últimos 2 meses desde hoy.
+    Si no se pueden detectar fechas, limita a 10KB.
     """
     import re as _re
+    from datetime import datetime, timedelta
     
-    # Patrones que indican inicio de un email anterior en el thread
-    thread_patterns = [
-        r'\n\s*[-_]{5,}\s*Original Message\s*[-_]{5,}',  # Outlook: -----Original Message-----
-        r'\n\s*De:\s+[^\n]+\n\s*Enviado el:\s+',  # Español: De: X\nEnviado el: 
-        r'\n\s*From:\s+[^\n]+\n\s*Sent:\s+',      # Inglés: From: X\nSent:
-        r'\n\s*El\s+.+?escribió:',           # Gmail español: El ... escribió:
-        r'\n\s*On\s+.+?wrote:',              # Gmail inglés: On ... wrote:
+    # Fecha límite: hace 2 meses
+    cutoff_date = datetime.now() - timedelta(days=60)
+    
+    # Patrones de fecha en headers de emails en threads
+    # Ejemplos:
+    #   "Enviado el: miércoles, 13 de mayo de 2026 9:19"
+    #   "Sent: Wednesday, May 13, 2026 9:19 AM"
+    #   "De: X\nEnviado el: 13/05/2026"
+    date_patterns = [
+        (r'Enviado el:\s+\w+,\s+(\d+)\s+de\s+(\w+)\s+de\s+(\d{4})', 'es_long'),  # español largo
+        (r'Sent:\s+\w+,\s+(\w+)\s+(\d+),\s+(\d{4})', 'en_long'),  # inglés largo
+        (r'Enviado el:\s+(\d{1,2})/(\d{1,2})/(\d{4})', 'es_short'),  # español corto
+        (r'Sent:\s+(\d{1,2})/(\d{1,2})/(\d{4})', 'en_short'),  # inglés corto
     ]
     
-    # Buscar el primer patrón que coincida
-    earliest_match = len(text)
-    for pattern in thread_patterns:
-        match = _re.search(pattern, text, _re.IGNORECASE | _re.MULTILINE | _re.DOTALL)
-        if match:
-            earliest_match = min(earliest_match, match.start())
+    meses_es = {
+        'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
+        'julio': 7, 'agosto': 8, 'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
+    }
+    meses_en = {
+        'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
+        'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
+    }
     
-    # Si encontramos un thread, cortar ahí
-    if earliest_match < len(text):
-        text = text[:earliest_match].rstrip()
+    # Buscar todos los headers de thread (De: ... Enviado el:)
+    thread_headers = list(_re.finditer(
+        r'\n\s*De:\s+[^\n]+\n\s*Enviado el:\s+[^\n]+',
+        text,
+        _re.IGNORECASE | _re.MULTILINE
+    ))
     
-    # Limitar longitud máxima (seguridad adicional)
-    max_length = 5000  # ~5KB es suficiente para consumos reales (reducido de 10KB)
+    if not thread_headers:
+        # No hay threads detectables, limitar a 10KB
+        if len(text) > 10000:
+            return text[:10000] + "\n[... contenido truncado ...]"
+        return text
+    
+    # Intentar encontrar el primer correo antiguo (> 2 meses)
+    cut_position = None
+    
+    for match in thread_headers:
+        header_text = match.group(0)
+        email_date = None
+        
+        # Intentar parsear la fecha con los diferentes patrones
+        for pattern, date_type in date_patterns:
+            date_match = _re.search(pattern, header_text, _re.IGNORECASE)
+            if date_match:
+                try:
+                    if date_type == 'es_long':
+                        day = int(date_match.group(1))
+                        month_name = date_match.group(2).lower()
+                        year = int(date_match.group(3))
+                        month = meses_es.get(month_name)
+                        if month:
+                            email_date = datetime(year, month, day)
+                    elif date_type == 'en_long':
+                        month_name = date_match.group(1).lower()
+                        day = int(date_match.group(2))
+                        year = int(date_match.group(3))
+                        month = meses_en.get(month_name)
+                        if month:
+                            email_date = datetime(year, month, day)
+                    elif date_type in ('es_short', 'en_short'):
+                        day = int(date_match.group(1))
+                        month = int(date_match.group(2))
+                        year = int(date_match.group(3))
+                        email_date = datetime(year, month, day)
+                    
+                    if email_date:
+                        break
+                except (ValueError, AttributeError):
+                    continue
+        
+        # Si encontramos una fecha antigua, cortar ahí
+        if email_date and email_date < cutoff_date:
+            cut_position = match.start()
+            break
+    
+    # Cortar si encontramos un correo antiguo
+    if cut_position is not None:
+        text = text[:cut_position].rstrip()
+    
+    # Limitar longitud máxima de seguridad (ahora 10KB en lugar de 5KB)
+    max_length = 10000
     if len(text) > max_length:
         text = text[:max_length] + "\n[... contenido truncado ...]"
     
