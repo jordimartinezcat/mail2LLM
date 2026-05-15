@@ -57,7 +57,11 @@ def send_error_notification(
     config,
     logger: logging.Logger,
 ) -> None:
-    """Envía un correo de notificación con los mensajes con error adjuntos como .txt."""
+    """
+    Envía notificaciones de error:
+    - A los destinatarios principales (<to>): TODOS los errores
+    - A cada remitente en include_original_senders: SOLO sus propios errores
+    """
     nc = config.notifications
     if not nc.enabled:
         return
@@ -67,6 +71,46 @@ def send_error_notification(
         logger.warning("Notificaciones habilitadas pero sin destinatarios configurados (<to>)")
         return
 
+    # 1. Enviar TODOS los errores a los destinatarios principales
+    _send_error_email(
+        failed_messages=failed_messages,
+        recipients=nc.to_addrs,
+        config=config,
+        logger=logger,
+        subject_suffix="revisión necesaria"
+    )
+    
+    # 2. Agrupar mensajes por remitente para envíos individuales
+    messages_by_sender = {}
+    for m in failed_messages:
+        sender_email = _extract_email_address(m.get("sender", ""))
+        if sender_email and sender_email in nc.include_original_senders:
+            if sender_email not in messages_by_sender:
+                messages_by_sender[sender_email] = []
+            messages_by_sender[sender_email].append(m)
+    
+    # 3. Enviar a cada remitente SOLO sus errores
+    for sender_email, sender_messages in messages_by_sender.items():
+        _send_error_email(
+            failed_messages=sender_messages,
+            recipients=[sender_email],
+            config=config,
+            logger=logger,
+            subject_suffix="tu correo requiere revisión"
+        )
+        logger.info("Notificación enviada a remitente original: %s (%d mensaje(s))", 
+                   sender_email, len(sender_messages))
+
+
+def _send_error_email(
+    failed_messages: list[dict],
+    recipients: list[str],
+    config,
+    logger: logging.Logger,
+    subject_suffix: str,
+) -> None:
+    """Helper para enviar un correo de error con mensajes adjuntos."""
+    nc = config.notifications
     n = len(failed_messages)
 
     # ── Cuerpo del correo ─────────────────────────────────────────────────────
@@ -89,21 +133,9 @@ def send_error_notification(
 
     # ── Construir mensaje MIME ────────────────────────────────────────────────
     msg = MIMEMultipart()
-    msg["Subject"] = f"[processMail] {n} correo(s) con error — revisión necesaria"
+    msg["Subject"] = f"[processMail] {n} correo(s) con error — {subject_suffix}"
     msg["From"] = nc.from_addr
-    msg["To"] = ", ".join(nc.to_addrs)
-    
-    # Incluir remitentes originales en CC si están configurados
-    cc_addrs = []
-    for m in failed_messages:
-        sender_email = _extract_email_address(m.get("sender", ""))
-        if sender_email and sender_email in nc.include_original_senders:
-            if sender_email not in cc_addrs:
-                cc_addrs.append(sender_email)
-    
-    if cc_addrs:
-        msg["Cc"] = ", ".join(cc_addrs)
-        logger.debug("Incluyendo en CC a remitentes originales: %s", ", ".join(cc_addrs))
+    msg["To"] = ", ".join(recipients)
     
     msg.attach(MIMEText(body_text, "plain", "utf-8"))
 
@@ -150,16 +182,13 @@ def send_error_notification(
     # ── Enviar ────────────────────────────────────────────────────────────────
     try:
         with _smtp_connect(nc, config.email, logger) as smtp:
-            all_recipients = nc.to_addrs + cc_addrs
-            smtp.sendmail(nc.from_addr, all_recipients, msg.as_string())
+            smtp.sendmail(nc.from_addr, recipients, msg.as_string())
 
         logger.info(
             "Notificación de error enviada a: %s (%d adjunto(s))",
-            ", ".join(nc.to_addrs),
+            ", ".join(recipients),
             n,
         )
-        if cc_addrs:
-            logger.info("  CC incluidos: %s", ", ".join(cc_addrs))
     except Exception as exc:  # noqa: BLE001
         logger.error("No se pudo enviar la notificación de error: %s", exc)
 
