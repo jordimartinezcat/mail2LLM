@@ -9,7 +9,7 @@ from config.loader import DBConfig
 
 logger = logging.getLogger("processMail")
 
-_TABLE_CONSUMS    = "ga_datalake.ite_consums_datarect"
+_TABLE_CONSUMS    = "ga_datalake.ite_consums_datarect_test"  # Tabla de pruebas
 _TABLE_CONSORCIAT = "ga_landing.ite_bcfact_clients"
 _COMENTARI = "Consum introduit des de correu electrònic"
 _COMENTARI_SENSE_DATA = "Consum introduit des de correu electrònic. Data no indicada"
