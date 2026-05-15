@@ -8,6 +8,85 @@ from email_io.reader import EmailReader
 from llm.processor import Consumption, extract_consumption
 from logger_setup import setup_logger
 from pending_confirmations import confirm_and_remove, save_pending
+import difflib
+import unicodedata
+
+
+def _normalize_text(text: str) -> str:
+    """Minúscules, sense accents, sense espais redundants."""
+    text = text.lower().strip()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    return " ".join(text.split())
+
+
+def _find_company_in_cache(
+    empresa: str,
+    cache: list[tuple[str, str]],
+    threshold: float = 0.6,
+) -> tuple[str, str, float] | None:
+    """
+    Busca la empresa en el caché mediante fuzzy matching.
+    Retorna (id, nombre_bd, score) si supera el umbral, o None.
+    """
+    empresa_norm = _normalize_text(empresa)
+    best_score = 0.0
+    best_id: str | None = None
+    best_nom: str | None = None
+
+    for id_, nom in cache:
+        score = difflib.SequenceMatcher(None, empresa_norm, _normalize_text(nom)).ratio()
+        if score > best_score:
+            best_score = score
+            best_id = id_
+            best_nom = nom
+
+    if best_score >= threshold:
+        return best_id, best_nom, best_score
+    return None
+
+
+def _normalize_company_names(
+    consumptions: list[Consumption],
+    cache: list[tuple[str, str]],
+    threshold: float = 0.6,
+) -> tuple[list[Consumption], list[str]]:
+    """
+    Normaliza los nombres de empresa usando el caché de la BD.
+    Reemplaza el nombre extraído por el LLM con el formato: "NOMBRE_BD (ID)"
+    
+    Returns:
+        (consumptions_normalizados, empresas_no_encontradas)
+    """
+    from logger_setup import setup_logger
+    logger = setup_logger()
+    
+    normalized = []
+    not_found = []
+    
+    for c in consumptions:
+        match = _find_company_in_cache(c.empresa, cache, threshold)
+        if match is None:
+            not_found.append(c.empresa)
+            continue
+        
+        id_bd, nombre_bd, score = match
+        logger.info(
+            "  Normalización: '%s' → '%s' (ID: %s, coincidencia: %.1f%%)",
+            c.empresa, nombre_bd, id_bd, score * 100
+        )
+        # Crear nuevo consumption con nombre normalizado "NOMBRE (ID)"
+        normalized.append(
+            Consumption(
+                fecha=c.fecha,
+                empresa=f"{nombre_bd} ({id_bd})",  # Formato: "MESSER EL MORELL (CL00123)"
+                valor=c.valor,
+                unidades=c.unidades,
+                fecha_inferida=getattr(c, "fecha_inferida", False),
+            )
+        )
+    
+    return normalized, not_found
 
 
 def _is_confirmation_message(body: str, subject: str) -> bool:
@@ -323,7 +402,10 @@ def main() -> None:
                     msg["body"], 
                     config.llm, 
                     msg["date"],
-                    pdf_contents=pdf_contents
+                    pdf_contents=pdf_contents,
+                    companies=consorciat_cache,
+                    sender=msg["sender"],
+                    subject=msg["subject"]
                 )
 
                 if consumptions is None:
@@ -363,37 +445,61 @@ def main() -> None:
                     errors += 1
                     continue
 
-                # Deduplicar: Si hay múltiples consumos de la misma empresa,
-                # mantener solo el más reciente (útil para emails con threads)
+                # Filtrar: Si hay múltiples consumos de la misma empresa,
+                # mantener solo el del mes más reciente
                 from datetime import datetime
                 from collections import defaultdict
                 
                 if len(consumptions) > 1:
-                    # Agrupar por empresa
+                    # Agrupar por empresa (sin considerar fecha)
                     by_empresa = defaultdict(list)
                     for c in consumptions:
                         by_empresa[c.empresa].append(c)
                     
-                    # Si hay empresas con múltiples consumos, mantener solo el más reciente
-                    deduplicated = []
+                    # Para cada empresa, quedarse solo con el consumo de fecha más reciente
+                    filtered = []
                     for empresa, consumos in by_empresa.items():
                         if len(consumos) > 1:
-                            # Ordenar por fecha (más reciente primero)
-                            consumos_sorted = sorted(
-                                consumos, 
-                                key=lambda x: datetime.strptime(x.fecha, "%Y-%m-%d"),
-                                reverse=True
-                            )
+                            # Ordenar por fecha (más reciente primero) y tomar el primero
+                            consumos_sorted = sorted(consumos, key=lambda x: x.fecha or "", reverse=True)
                             most_recent = consumos_sorted[0]
                             logger.info(
-                                "  Deduplicación: %s tiene %d consumos, usando el más reciente: %s (%.2f %s)",
+                                "  Filtrado: %s tiene %d consumos, usando solo el más reciente: %s (%.2f %s)",
                                 empresa, len(consumos), most_recent.fecha, most_recent.valor, most_recent.unidades
                             )
-                            deduplicated.append(most_recent)
+                            filtered.append(most_recent)
                         else:
-                            deduplicated.append(consumos[0])
+                            filtered.append(consumos[0])  # solo hay uno
                     
-                    consumptions = deduplicated
+                    consumptions = filtered
+
+                # Normalizar nombres de empresa con la BD (reemplazar por nombre oficial + ID)
+                if config.db.enabled and consorciat_cache:
+                    consumptions, empresas_no_encontradas = _normalize_company_names(
+                        consumptions,
+                        consorciat_cache,
+                        config.db.match_threshold
+                    )
+                    
+                    if empresas_no_encontradas:
+                        logger.warning(
+                            "Mensaje [%s] con %d empresa(s) no identificada(s): %s",
+                            uid,
+                            len(empresas_no_encontradas),
+                            ", ".join(empresas_no_encontradas)
+                        )
+                        failed_messages.append({
+                            "uid": uid,
+                            "subject": msg["subject"],
+                            "sender": msg["sender"],
+                            "date": msg.get("date", ""),
+                            "body": msg["body"],
+                            "raw": msg.get("raw", ""),
+                            "reason": f"Empresa(s) no identificada(s): {', '.join(empresas_no_encontradas)}",
+                        })
+                        reader.move_message(uid, config.email.folder_errors)
+                        errors += 1
+                        continue
 
                 # Verificar que todos los registros tienen los campos completos
                 incompletos = [

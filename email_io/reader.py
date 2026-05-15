@@ -135,6 +135,7 @@ def _extract_pdf_attachments(msg: Message) -> list[str]:
 def _clean_body(text: str) -> str:
     """
     Normaliza el cuerpo del correo para facilitar la extracción por el LLM:
+    - Elimina firmas/footers HTML típicos al inicio (Consorci, empresas)
     - Elimina líneas de firma y separadores típicos de email
     - Colapsa líneas en blanco múltiples en una sola
     - Normaliza tabulaciones y espacios múltiples en columnas alineadas
@@ -142,6 +143,17 @@ def _clean_body(text: str) -> str:
     """
     import re as _re
 
+    # Eliminar footer/firma del Consorci solo si aparece AL INICIO del mensaje
+    # Eliminar todo desde el inicio hasta justo antes del primer "De:" de un thread
+    if '&nbsp;' in text[:200] and 'destrueixin' in text[:2000]:
+        # Buscar el primer "De:" después del footer que marca el inicio del contenido real
+        match = _re.search(r'De:\s+\w', text, _re.IGNORECASE)
+        if match:
+            # Eliminar todo desde el inicio hasta (pero sin incluir) este "De:"
+            logger.debug("Footer HTML del Consorci eliminado (hasta posición %d)", match.start())
+            text = text[match.start():]
+            text = text.lstrip()
+    
     lines = text.splitlines()
     cleaned = []
     for line in lines:
@@ -166,6 +178,7 @@ def _remove_email_thread(text: str) -> str:
     """
     Elimina correos antiguos de threads/forwards.
     Mantiene solo los correos de los últimos 2 meses desde hoy.
+    IMPORTANTE: Preserva el texto ANTES del primer header de thread.
     Si no se pueden detectar fechas, limita a 10KB.
     """
     import re as _re
@@ -175,15 +188,12 @@ def _remove_email_thread(text: str) -> str:
     cutoff_date = datetime.now() - timedelta(days=60)
     
     # Patrones de fecha en headers de emails en threads
-    # Ejemplos:
-    #   "Enviado el: miércoles, 13 de mayo de 2026 9:19"
-    #   "Sent: Wednesday, May 13, 2026 9:19 AM"
-    #   "De: X\nEnviado el: 13/05/2026"
     date_patterns = [
-        (r'Enviado el:\s+\w+,\s+(\d+)\s+de\s+(\w+)\s+de\s+(\d{4})', 'es_long'),  # español largo
-        (r'Sent:\s+\w+,\s+(\w+)\s+(\d+),\s+(\d{4})', 'en_long'),  # inglés largo
-        (r'Enviado el:\s+(\d{1,2})/(\d{1,2})/(\d{4})', 'es_short'),  # español corto
-        (r'Sent:\s+(\d{1,2})/(\d{1,2})/(\d{4})', 'en_short'),  # inglés corto
+        (r'Enviado el:\s+\w+,\s+(\d+)\s+de\s+(\w+)\s+de\s+(\d{4})', 'es_long'),
+        (r'Sent:\s+\w+,\s+(\w+)\s+(\d+),\s+(\d{4})', 'en_long'),
+        (r'Enviado el:\s+(\d{1,2})/(\d{1,2})/(\d{4})', 'es_short'),
+        (r'Sent:\s+(\d{1,2})/(\d{1,2})/(\d{4})', 'en_short'),
+        (r'Enviado:\s+\w+,\s+(\d+)\s+de\s+(\w+)\s+de\s+(\d{4})', 'es_long'),  # "Enviado:" sin "el:"
     ]
     
     meses_es = {
@@ -195,9 +205,9 @@ def _remove_email_thread(text: str) -> str:
         'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
     }
     
-    # Buscar todos los headers de thread (De: ... Enviado el:)
+    # Buscar todos los headers de thread (De: ... Enviado:)
     thread_headers = list(_re.finditer(
-        r'\n\s*De:\s+[^\n]+\n\s*Enviado el:\s+[^\n]+',
+        r'\n\s*De:\s+[^\n]+\n\s*Enviado[^\n]*:\s+[^\n]+',
         text,
         _re.IGNORECASE | _re.MULTILINE
     ))
@@ -208,14 +218,18 @@ def _remove_email_thread(text: str) -> str:
             return text[:10000] + "\n[... contenido truncado ...]"
         return text
     
-    # Intentar encontrar el primer correo antiguo (> 2 meses)
+    # Preservar el texto ANTES del primer header (es el mensaje más reciente)
+    first_header_pos = thread_headers[0].start()
+    text_before_first_header = text[:first_header_pos]
+    
+    # Intentar encontrar el primer correo antiguo (> 2 meses) DESPUÉS del primer header
     cut_position = None
     
     for match in thread_headers:
         header_text = match.group(0)
         email_date = None
         
-        # Intentar parsear la fecha con los diferentes patrones
+        # Intentar parsear la fecha
         for pattern, date_type in date_patterns:
             date_match = _re.search(pattern, header_text, _re.IGNORECASE)
             if date_match:
@@ -250,11 +264,12 @@ def _remove_email_thread(text: str) -> str:
             cut_position = match.start()
             break
     
-    # Cortar si encontramos un correo antiguo
+    # Construir el texto final: texto antes del primer header + contenido hasta el corte
     if cut_position is not None:
+        # Mantener desde el inicio hasta la posición de corte
         text = text[:cut_position].rstrip()
     
-    # Limitar longitud máxima de seguridad (ahora 10KB en lugar de 5KB)
+    # Limitar longitud máxima de seguridad
     max_length = 10000
     if len(text) > max_length:
         text = text[:max_length] + "\n[... contenido truncado ...]"

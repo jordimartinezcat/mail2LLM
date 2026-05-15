@@ -1,9 +1,23 @@
 import logging
+import re
 import smtplib
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+
+def _extract_email_address(sender: str) -> str:
+    """
+    Extrae la dirección de email de un string de remitente.
+    Ejemplos:
+      "John Doe <john@example.com>" → "john@example.com"
+      "john@example.com" → "john@example.com"
+    """
+    match = re.search(r'<([^>]+)>', sender)
+    if match:
+        return match.group(1).strip().lower()
+    return sender.strip().lower()
 
 
 def _smtp_connect(nc, config_email, logger: logging.Logger) -> smtplib.SMTP:
@@ -78,44 +92,57 @@ def send_error_notification(
     msg["Subject"] = f"[processMail] {n} correo(s) con error — revisión necesaria"
     msg["From"] = nc.from_addr
     msg["To"] = ", ".join(nc.to_addrs)
+    
+    # Incluir remitentes originales en CC si están configurados
+    cc_addrs = []
+    for m in failed_messages:
+        sender_email = _extract_email_address(m.get("sender", ""))
+        if sender_email and sender_email in nc.include_original_senders:
+            if sender_email not in cc_addrs:
+                cc_addrs.append(sender_email)
+    
+    if cc_addrs:
+        msg["Cc"] = ", ".join(cc_addrs)
+        logger.debug("Incluyendo en CC a remitentes originales: %s", ", ".join(cc_addrs))
+    
     msg.attach(MIMEText(body_text, "plain", "utf-8"))
 
-    # ── Adjuntar cada correo fallido como .txt ────────────────────────────────
+    # ── Adjuntar cada correo fallido como .eml (formato Outlook) ──────────────
     for m in failed_messages:
         subject_safe = "".join(
             c if c.isalnum() or c in " _-" else "_"
             for c in (m["subject"] or "sin_asunto")
         )[:50].strip()
-        filename = f"error_{m['uid']}_{subject_safe}.txt"
+        filename = f"error_{m['uid']}_{subject_safe}.eml"
         
-        # Usar el mensaje RAW completo si está disponible, sino el body procesado
+        # Usar el mensaje RAW completo si está disponible
         raw_content = m.get("raw", "")
         if raw_content:
-            content = (
-                f"UID    : {m['uid']}\n"
-                f"Asunto : {m['subject'] or '(sin asunto)'}\n"
-                f"De     : {m['sender'] or '?'}\n"
-                f"Fecha  : {m['date'] or '?'}\n"
-                f"Motivo : {m['reason']}\n"
-                f"{'=' * 60}\n"
-                f"CORREO COMPLETO (RAW):\n"
-                f"{'=' * 60}\n\n"
+            # Añadir comentario al inicio con el motivo del error (como headers)
+            eml_content = (
+                f"X-ProcessMail-Error: {m['reason']}\r\n"
+                f"X-ProcessMail-UID: {m['uid']}\r\n"
                 f"{raw_content}"
             )
         else:
-            # Fallback al body procesado si no hay raw
-            content = (
-                f"UID    : {m['uid']}\n"
-                f"Asunto : {m['subject'] or '(sin asunto)'}\n"
-                f"De     : {m['sender'] or '?'}\n"
-                f"Fecha  : {m['date'] or '?'}\n"
-                f"Motivo : {m['reason']}\n"
-                f"{'=' * 60}\n\n"
+            # Construir un .eml básico si no hay raw
+            from email.utils import formatdate
+            eml_content = (
+                f"From: {m['sender'] or 'unknown@unknown'}\r\n"
+                f"To: consums@ccaait.cat\r\n"
+                f"Subject: {m['subject'] or '(sin asunto)'}\r\n"
+                f"Date: {m['date'] or formatdate()}\r\n"
+                f"X-ProcessMail-Error: {m['reason']}\r\n"
+                f"X-ProcessMail-UID: {m['uid']}\r\n"
+                f"Content-Type: text/plain; charset=utf-8\r\n"
+                f"\r\n"
                 f"{m['body'] or '(sin cuerpo)'}"
             )
         
+        # Adjuntar como application/octet-stream con extensión .eml
         part = MIMEBase("application", "octet-stream")
-        part.set_payload(content.encode("utf-8"))
+        # Codificar el contenido a bytes UTF-8
+        part.set_payload(eml_content.encode("utf-8"))
         encoders.encode_base64(part)
         part.add_header("Content-Disposition", "attachment", filename=filename)
         msg.attach(part)
@@ -123,13 +150,16 @@ def send_error_notification(
     # ── Enviar ────────────────────────────────────────────────────────────────
     try:
         with _smtp_connect(nc, config.email, logger) as smtp:
-            smtp.sendmail(nc.from_addr, nc.to_addrs, msg.as_string())
+            all_recipients = nc.to_addrs + cc_addrs
+            smtp.sendmail(nc.from_addr, all_recipients, msg.as_string())
 
         logger.info(
             "Notificación de error enviada a: %s (%d adjunto(s))",
             ", ".join(nc.to_addrs),
             n,
         )
+        if cc_addrs:
+            logger.info("  CC incluidos: %s", ", ".join(cc_addrs))
     except Exception as exc:  # noqa: BLE001
         logger.error("No se pudo enviar la notificación de error: %s", exc)
 
@@ -276,6 +306,14 @@ Per REBUTJAR, simplement ignora aquest missatge.
     msg["From"] = nc.from_addr
     msg["To"] = ", ".join(nc.to_addrs)
     
+    # Incluir remitente original en CC si está configurado
+    cc_addrs = []
+    sender_email = _extract_email_address(original_sender)
+    if sender_email and sender_email in nc.include_original_senders:
+        cc_addrs.append(sender_email)
+        msg["Cc"] = sender_email
+        logger.debug("Incluyendo en CC al remitente original: %s", sender_email)
+    
     # Adjuntar ambdues versions (text pla primer, HTML després)
     msg.attach(MIMEText(body_text, "plain", "utf-8"))
     msg.attach(MIMEText(body_html, "html", "utf-8"))
@@ -283,7 +321,8 @@ Per REBUTJAR, simplement ignora aquest missatge.
     # ── Enviar ────────────────────────────────────────────────────────────────
     try:
         with _smtp_connect(nc, config.email, logger) as smtp:
-            smtp.sendmail(nc.from_addr, nc.to_addrs, msg.as_string())
+            all_recipients = nc.to_addrs + cc_addrs
+            smtp.sendmail(nc.from_addr, all_recipients, msg.as_string())
         
         logger.info(
             "Sol·licitud de confirmació HTML enviada a: %s (UID: %s, %d consum(s))",
@@ -291,5 +330,7 @@ Per REBUTJAR, simplement ignora aquest missatge.
             uid,
             len(consumptions),
         )
+        if cc_addrs:
+            logger.info("  CC incluido: %s", sender_email)
     except Exception as exc:  # noqa: BLE001
         logger.error("No s'ha pogut enviar la sol·licitud de confirmació: %s", exc)
