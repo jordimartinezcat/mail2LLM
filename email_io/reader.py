@@ -34,22 +34,59 @@ def _decode_header_value(value: str | None) -> str:
 
 
 def _extract_plain_body(msg: Message) -> str:
-    """Extrae el cuerpo en texto plano de un mensaje (soporta multipart)."""
+    """
+    Extrae el cuerpo en texto plano de un mensaje (soporta multipart).
+    Si no hay text/plain, intenta extraer de text/html.
+    """
+    plain_text = None
+    html_text = None
+    
     if msg.is_multipart():
         for part in msg.walk():
-            if (
-                part.get_content_type() == "text/plain"
-                and "attachment" not in str(part.get("Content-Disposition", ""))
-            ):
-                charset = part.get_content_charset() or "utf-8"
-                payload = part.get_payload(decode=True)
-                if payload:
-                    return _clean_body(payload.decode(charset, errors="replace"))
-        return ""
+            if "attachment" in str(part.get("Content-Disposition", "")):
+                continue
+                
+            content_type = part.get_content_type()
+            charset = part.get_content_charset() or "utf-8"
+            payload = part.get_payload(decode=True)
+            
+            if not payload:
+                continue
+            
+            decoded = payload.decode(charset, errors="replace")
+            
+            # Preferir text/plain
+            if content_type == "text/plain":
+                plain_text = decoded
+                break  # Ya tenemos lo que queremos
+            elif content_type == "text/html" and not html_text:
+                html_text = decoded
     else:
+        # Mensaje simple (no multipart)
+        content_type = msg.get_content_type()
         charset = msg.get_content_charset() or "utf-8"
         payload = msg.get_payload(decode=True)
-        return _clean_body(payload.decode(charset, errors="replace")) if payload else ""
+        
+        if payload:
+            decoded = payload.decode(charset, errors="replace")
+            if content_type == "text/plain":
+                plain_text = decoded
+            elif content_type == "text/html":
+                html_text = decoded
+    
+    # Devolver texto plano si existe, sino extraer de HTML
+    if plain_text:
+        return _clean_body(_remove_email_thread(plain_text))
+    elif html_text:
+        # Extraer texto básico de HTML (eliminar tags)
+        import re
+        text = re.sub(r'<style[^>]*>.*?</style>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', ' ', text)  # Eliminar todos los tags
+        text = re.sub(r'\s+', ' ', text)  # Colapsar espacios
+        return _clean_body(_remove_email_thread(text.strip()))
+    
+    return ""
 
 
 def _extract_pdf_attachments(msg: Message) -> list[str]:
@@ -98,6 +135,7 @@ def _extract_pdf_attachments(msg: Message) -> list[str]:
 def _clean_body(text: str) -> str:
     """
     Normaliza el cuerpo del correo para facilitar la extracción por el LLM:
+    - Elimina firmas/footers HTML típicos al inicio (Consorci, empresas)
     - Elimina líneas de firma y separadores típicos de email
     - Colapsa líneas en blanco múltiples en una sola
     - Normaliza tabulaciones y espacios múltiples en columnas alineadas
@@ -105,6 +143,17 @@ def _clean_body(text: str) -> str:
     """
     import re as _re
 
+    # Eliminar footer/firma del Consorci solo si aparece AL INICIO del mensaje
+    # Eliminar todo desde el inicio hasta justo antes del primer "De:" de un thread
+    if '&nbsp;' in text[:200] and 'destrueixin' in text[:2000]:
+        # Buscar el primer "De:" después del footer que marca el inicio del contenido real
+        match = _re.search(r'De:\s+\w', text, _re.IGNORECASE)
+        if match:
+            # Eliminar todo desde el inicio hasta (pero sin incluir) este "De:"
+            logger.debug("Footer HTML del Consorci eliminado (hasta posición %d)", match.start())
+            text = text[match.start():]
+            text = text.lstrip()
+    
     lines = text.splitlines()
     cleaned = []
     for line in lines:
@@ -123,6 +172,109 @@ def _clean_body(text: str) -> str:
     # Colapsar líneas en blanco múltiples en una sola
     result = _re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned))
     return result.strip()
+
+
+def _remove_email_thread(text: str) -> str:
+    """
+    Elimina correos antiguos de threads/forwards.
+    Mantiene solo los correos de los últimos 2 meses desde hoy.
+    IMPORTANTE: Preserva el texto ANTES del primer header de thread.
+    Si no se pueden detectar fechas, limita a 10KB.
+    """
+    import re as _re
+    from datetime import datetime, timedelta
+    
+    # Fecha límite: hace 2 meses
+    cutoff_date = datetime.now() - timedelta(days=60)
+    
+    # Patrones de fecha en headers de emails en threads
+    date_patterns = [
+        (r'Enviado el:\s+\w+,\s+(\d+)\s+de\s+(\w+)\s+de\s+(\d{4})', 'es_long'),
+        (r'Sent:\s+\w+,\s+(\w+)\s+(\d+),\s+(\d{4})', 'en_long'),
+        (r'Enviado el:\s+(\d{1,2})/(\d{1,2})/(\d{4})', 'es_short'),
+        (r'Sent:\s+(\d{1,2})/(\d{1,2})/(\d{4})', 'en_short'),
+        (r'Enviado:\s+\w+,\s+(\d+)\s+de\s+(\w+)\s+de\s+(\d{4})', 'es_long'),  # "Enviado:" sin "el:"
+    ]
+    
+    meses_es = {
+        'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4, 'mayo': 5, 'junio': 6,
+        'julio': 7, 'agosto': 8, 'septiembre': 9, 'octubre': 10, 'noviembre': 11, 'diciembre': 12
+    }
+    meses_en = {
+        'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
+        'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
+    }
+    
+    # Buscar todos los headers de thread (De: ... Enviado:)
+    thread_headers = list(_re.finditer(
+        r'\n\s*De:\s+[^\n]+\n\s*Enviado[^\n]*:\s+[^\n]+',
+        text,
+        _re.IGNORECASE | _re.MULTILINE
+    ))
+    
+    if not thread_headers:
+        # No hay threads detectables, limitar a 10KB
+        if len(text) > 10000:
+            return text[:10000] + "\n[... contenido truncado ...]"
+        return text
+    
+    # Preservar el texto ANTES del primer header (es el mensaje más reciente)
+    first_header_pos = thread_headers[0].start()
+    text_before_first_header = text[:first_header_pos]
+    
+    # Intentar encontrar el primer correo antiguo (> 2 meses) DESPUÉS del primer header
+    cut_position = None
+    
+    for match in thread_headers:
+        header_text = match.group(0)
+        email_date = None
+        
+        # Intentar parsear la fecha
+        for pattern, date_type in date_patterns:
+            date_match = _re.search(pattern, header_text, _re.IGNORECASE)
+            if date_match:
+                try:
+                    if date_type == 'es_long':
+                        day = int(date_match.group(1))
+                        month_name = date_match.group(2).lower()
+                        year = int(date_match.group(3))
+                        month = meses_es.get(month_name)
+                        if month:
+                            email_date = datetime(year, month, day)
+                    elif date_type == 'en_long':
+                        month_name = date_match.group(1).lower()
+                        day = int(date_match.group(2))
+                        year = int(date_match.group(3))
+                        month = meses_en.get(month_name)
+                        if month:
+                            email_date = datetime(year, month, day)
+                    elif date_type in ('es_short', 'en_short'):
+                        day = int(date_match.group(1))
+                        month = int(date_match.group(2))
+                        year = int(date_match.group(3))
+                        email_date = datetime(year, month, day)
+                    
+                    if email_date:
+                        break
+                except (ValueError, AttributeError):
+                    continue
+        
+        # Si encontramos una fecha antigua, cortar ahí
+        if email_date and email_date < cutoff_date:
+            cut_position = match.start()
+            break
+    
+    # Construir el texto final: texto antes del primer header + contenido hasta el corte
+    if cut_position is not None:
+        # Mantener desde el inicio hasta la posición de corte
+        text = text[:cut_position].rstrip()
+    
+    # Limitar longitud máxima de seguridad
+    max_length = 10000
+    if len(text) > max_length:
+        text = text[:max_length] + "\n[... contenido truncado ...]"
+    
+    return text
 
 
 # ---------------------------------------------------------------------------

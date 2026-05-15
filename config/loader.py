@@ -39,6 +39,7 @@ class NotificationConfig:
     smtp_password: str
     from_addr: str
     to_addrs: list
+    include_original_senders: list  # Lista de correos que se incluyen en CC si son remitentes originales
 
 
 @dataclass
@@ -49,7 +50,7 @@ class DBConfig:
     database: str
     username: str
     password: str
-    consorciat_name_field: str = "nom"  # columna de ga_landing.ite_consorciat con el nombre de empresa
+    consorciat_name_field: str = "alias"  # columna de ga_landing.ite_bcfact_clients con el nombre de empresa
     match_threshold: float = 0.6        # llindar mínim de similitud (0.0–1.0) per acceptar una coincidència
     client_encoding: str = "LATIN1"     # encoding del servidor PostgreSQL (LATIN1, UTF8, WIN1252...)
 
@@ -116,6 +117,10 @@ def load_config(config_path: str | None = None) -> AppConfig:
     if notif_elem is not None:
         to_text = (notif_elem.findtext("to") or "").strip()
         to_addrs = [a.strip() for a in to_text.split(",") if a.strip()]
+        
+        include_senders_text = (notif_elem.findtext("include_original_senders") or "").strip()
+        include_original_senders = [a.strip() for a in include_senders_text.split(",") if a.strip()]
+        
         notifications = NotificationConfig(
             enabled=(notif_elem.findtext("enabled") or "false").strip().lower() == "true",
             smtp_server=(notif_elem.findtext("smtp_server") or "").strip(),
@@ -125,6 +130,7 @@ def load_config(config_path: str | None = None) -> AppConfig:
             smtp_password=(notif_elem.findtext("smtp_password") or "").strip(),
             from_addr=(notif_elem.findtext("from") or "").strip(),
             to_addrs=to_addrs,
+            include_original_senders=include_original_senders,
         )
     else:
         notifications = NotificationConfig(
@@ -136,6 +142,7 @@ def load_config(config_path: str | None = None) -> AppConfig:
             smtp_password="",
             from_addr="",
             to_addrs=[],
+            include_original_senders=[],
         )
 
     # --- DB -------------------------------------------------------------------
@@ -148,7 +155,7 @@ def load_config(config_path: str | None = None) -> AppConfig:
             database=_require(db_elem, "database", "db/database") if (db_elem.findtext("enabled") or "").strip().lower() == "true" else (db_elem.findtext("database") or "").strip(),
             username=(db_elem.findtext("username") or db_elem.findtext("user") or "").strip(),
             password=(db_elem.findtext("password") or "").strip(),
-            consorciat_name_field=(db_elem.findtext("consorciat_name_field") or "nom").strip(),
+            consorciat_name_field=(db_elem.findtext("consorciat_name_field") or "alias").strip(),
             match_threshold=float(db_elem.findtext("match_threshold") or "0.6"),
             client_encoding=(db_elem.findtext("client_encoding") or "LATIN1").strip(),
         )

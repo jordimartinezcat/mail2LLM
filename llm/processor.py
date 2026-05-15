@@ -35,6 +35,21 @@ Extract ALL water consumption records from the following email and its attachmen
 An email may contain one or more consumption records from different companies.
 The data may appear in the email body or in attached PDF files.
 
+**Email Context:**
+- From: {sender}
+- Subject: {subject}
+
+**IMPORTANT - Known Companies:**
+The following companies are registered in the system. When extracting company names from the email, try to match them with these registered names or their common abbreviations:
+{companies_list}
+
+**IMPORTANT - Company Name Extraction:**
+- The company name is usually mentioned in the email sender, subject line, or explicitly in the body
+- Look for context clues: email domains (e.g., @messergroup.com → "Messer"), sender names, subject lines
+- If you see location names (e.g., "Morell", "Tarragona") combined with company context, extract the FULL company name including location (e.g., "Messer El Morell")
+- Do NOT extract just the location as the company name unless there's no other context
+- If unsure between a location and a company name, prefer the company name mentioned in email headers or explicitly stated
+
 Return ONLY a valid JSON array where each element has exactly these fields:
 - "fecha": consumption date in ISO 8601 format (YYYY-MM-DD). Accept any date format (DD/MM/YYYY, MM/YYYY, written month+year, etc.) and convert to ISO 8601.
   Reference period for this email: {ref_date} (year={ref_year}).
@@ -42,8 +57,8 @@ Return ONLY a valid JSON array where each element has exactly these fields:
   * If a full date is explicitly stated in the body: convert it to ISO 8601 and use it.
   * If only a month name is found but NO year: use that month with year {ref_year}. Use the last day of that month.
   * If NO date at all is found in the body: use null. Do NOT use the reference period as a fallback — return null so the system can handle it.
-- "empresa": name, short identifier, nickname, or code of the company or entity. Even single words or abbreviations are valid. If not found, use null.
-- "valor": decimal number with the consumption value in cubic meters. Remove thousand separators (dots or spaces) and convert decimal commas to dots. Examples: "1.250,50" \u2192 1250.5 | "342,00" \u2192 342.0. If not found, use null.
+- "empresa": name, short identifier, nickname, or code of the company. **Extract the FULL company name, not just the location**. Use context from email headers, sender, and subject. If not found, use null.
+- "valor": decimal number with the consumption value in cubic meters. Remove thousand separators (dots or spaces) and convert decimal commas to dots. Examples: "1.250,50" → 1250.5 | "342,00" → 342.0. If not found, use null.
 - "unidades": always "m3".
 
 If there is only one record, return a single-element array.
@@ -77,7 +92,10 @@ def extract_consumption(
     body: str, 
     config: LLMConfig, 
     email_date: str = "",
-    pdf_contents: list[str] | None = None
+    pdf_contents: list[str] | None = None,
+    companies: list[tuple[str, str]] | None = None,
+    sender: str = "",
+    subject: str = ""
 ) -> list["Consumption"] | None:
     """
     Envía el cuerpo del correo y contenido de PDFs adjuntos al LLM y extrae los datos de consumo.
@@ -87,6 +105,9 @@ def extract_consumption(
         config: Configuración del LLM
         email_date: Cabecera Date: del correo (RFC 2822), usada para calcular la fecha de referencia
         pdf_contents: Lista de contenidos de PDFs adjuntos extraídos
+        companies: Lista de (id, nombre) de empresas registradas para ayudar al LLM
+        sender: Remitente del email (para ayudar a identificar la empresa)
+        subject: Asunto del email (para ayudar a identificar la empresa)
     
     Returns:
         Lista de Consumption (puede ser vacía), o None si hay error
@@ -98,7 +119,27 @@ def extract_consumption(
     if pdf_contents:
         combined_content += "\n\n" + "\n\n═══════════════════════════════════\n\n".join(pdf_contents)
     
-    prompt = _PROMPT_TEMPLATE.format(body=combined_content, ref_date=ref_date, ref_year=ref_year)
+    # Formatear lista de empresas para el prompt (limitar a primeras 50 para no saturar)
+    companies_text = "No company list provided."
+    if companies:
+        companies_sample = companies[:50]  # Primeras 50 empresas
+        companies_lines = [f"- {nombre} (ID: {id_})" for id_, nombre in companies_sample]
+        if len(companies) > 50:
+            companies_lines.append(f"... and {len(companies) - 50} more companies")
+        companies_text = "\n".join(companies_lines)
+    
+    prompt = _PROMPT_TEMPLATE.format(
+        sender=sender or "Unknown",
+        subject=subject or "No subject",
+        body=combined_content, 
+        ref_date=ref_date, 
+        ref_year=ref_year,
+        companies_list=companies_text
+    )
+    
+    # Log: verificar contexto enviado al LLM
+    logger.info("  Contexto enviado al LLM → From: %s | Subject: %s", 
+                sender or "Unknown", subject or "No subject")
 
     _RESPONSE_SCHEMA = {
         "type": "array",

@@ -10,7 +10,7 @@ from config.loader import DBConfig
 logger = logging.getLogger("processMail")
 
 _TABLE_CONSUMS    = "ga_datalake.ite_consums_datarect"
-_TABLE_CONSORCIAT = "ga_landing.ite_consorciat"
+_TABLE_CONSORCIAT = "ga_landing.ite_bcfact_clients"
 _COMENTARI = "Consum introduit des de correu electrònic"
 _COMENTARI_SENSE_DATA = "Consum introduit des de correu electrònic. Data no indicada"
 
@@ -44,21 +44,21 @@ def _normalize(text: str) -> str:
 
 def load_consorciat_cache(config: DBConfig) -> list[tuple[str, str]]:
     """
-    Carrega totes les empreses de ga_landing.ite_consorciat.
-    Retorna llista de (id, nom) filtrant files amb id o nom nuls.
+    Carrega totes les empreses de ga_landing.ite_bcfact_clients.
+    Retorna llista de (number, alias) filtrant files amb number o alias nuls.
     """
     query = (
-        f"SELECT id, {config.consorciat_name_field} "
+        f"SELECT number, alias "
         f"FROM {_TABLE_CONSORCIAT} "
-        f"WHERE id IS NOT NULL AND {config.consorciat_name_field} IS NOT NULL"
+        f"WHERE number IS NOT NULL AND alias IS NOT NULL"
     )
     with _connect(config) as conn:
         with conn.cursor() as cur:
             cur.execute(query)
             rows = cur.fetchall()
     logger.info(
-        "Cache ite_consorciat carregada: %d empreses (columna '%s')",
-        len(rows), config.consorciat_name_field,
+        "Cache ite_bcfact_clients carregada: %d empreses (columna 'alias')",
+        len(rows),
     )
     return rows
 
@@ -109,20 +109,33 @@ def save_consumptions(
     with _connect(config) as conn:
         with conn.cursor() as cur:
             for c in consumptions:
-                match = _find_best_match(c.empresa, cache, config.match_threshold)
-                if match is None:
-                    logger.warning(
-                        "Empresa no identificada: '%s' (llindar=%.2f) — consum omès (data=%s, valor=%s)",
-                        c.empresa, config.match_threshold, c.fecha, c.valor,
+                # El nombre ya viene normalizado con formato "NOMBRE (ID)"
+                # Extraer el ID del formato "NOMBRE (CL00123)"
+                import re
+                id_match = re.search(r'\(([^)]+)\)$', c.empresa)
+                if id_match:
+                    id_consorciat = id_match.group(1)
+                    nom_empresa = c.empresa[:id_match.start()].strip()
+                    logger.info(
+                        "  Guardando consumo → %s (%s) | %s | %.2f %s",
+                        nom_empresa, id_consorciat, c.fecha, c.valor, c.unidades
                     )
-                    not_found.append(c.empresa or "?")
-                    continue
-
-                id_consorciat, nom_trobat, score = match
-                logger.info(
-                    "  Empresa '%s' → '%s' (id=%s, score=%.2f)",
-                    c.empresa, nom_trobat, id_consorciat, score,
-                )
+                else:
+                    # Fallback: si no tiene el formato esperado, intentar fuzzy matching
+                    match = _find_best_match(c.empresa, cache, config.match_threshold)
+                    if match is None:
+                        logger.warning(
+                            "Empresa no identificada: '%s' (llindar=%.2f) — consum omès (data=%s, valor=%s)",
+                            c.empresa, config.match_threshold, c.fecha, c.valor,
+                        )
+                        not_found.append(c.empresa or "?")
+                        continue
+                    
+                    id_consorciat, nom_trobat, score = match
+                    logger.info(
+                        "  Empresa '%s' → '%s' (id=%s, score=%.2f)",
+                        c.empresa, nom_trobat, id_consorciat, score,
+                    )
 
                 valor_int = round(float(c.valor))
                 comentari = _COMENTARI_SENSE_DATA if getattr(c, "fecha_inferida", False) else _COMENTARI
