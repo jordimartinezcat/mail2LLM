@@ -135,42 +135,13 @@ def _extract_pdf_attachments(msg: Message) -> list[str]:
 def _clean_body(text: str) -> str:
     """
     Normaliza el cuerpo del correo para facilitar la extracción por el LLM:
-    - Elimina firmas/footers HTML típicos al inicio y al final (Consorci, empresas)
+    - Elimina firmas/footers HTML típicos al inicio (Consorci, empresas)
     - Elimina líneas de firma y separadores típicos de email
     - Colapsa líneas en blanco múltiples en una sola
     - Normaliza tabulaciones y espacios múltiples en columnas alineadas
     - Elimina caracteres de control y líneas irrelevantes
     """
     import re as _re
-
-    # Eliminar footer/firma del Consorci que aparece AL FINAL del mensaje
-    # Buscar el patrón característico del footer del Consorci
-    footer_patterns = [
-        r'C\s*onsorci\s*d[\'&#8217;]\s*A\s*igües\s*de\s*T\s*arragona',  # Consorci con espacios HTML
-        r'destrueixin\s+i\s+ens\s+ho\s+comuniquin',  # Texto legal
-        r'Pel\s+medi\s+ambient,\s+val\s+la\s+pena\s+imprimir',  # Texto ecológico
-    ]
-    
-    for pattern in footer_patterns:
-        match = _re.search(pattern, text, _re.IGNORECASE)
-        if match:
-            # Buscar hacia atrás desde el match para encontrar el inicio del bloque de footer
-            # Típicamente empieza con mucho &nbsp; o espacios
-            text_before = text[:match.start()]
-            # Buscar la última línea con contenido real antes del footer (no solo espacios/nbsp)
-            lines_before = text_before.split('\n')
-            last_content_idx = len(lines_before) - 1
-            for i in range(len(lines_before) - 1, -1, -1):
-                line = lines_before[i].strip()
-                # Si la línea tiene contenido real (no solo &nbsp;, espacios, o vacía)
-                if line and not _re.match(r'^(&nbsp;|\s)+$', line):
-                    last_content_idx = i
-                    break
-            
-            # Cortar desde después del último contenido real
-            text = '\n'.join(lines_before[:last_content_idx + 1])
-            logger.debug("Footer del Consorci eliminado (detectado en posición %d)", match.start())
-            break
 
     # Eliminar footer/firma del Consorci solo si aparece AL INICIO del mensaje (threads)
     # Eliminar todo desde el inicio hasta justo antes del primer "De:" de un thread

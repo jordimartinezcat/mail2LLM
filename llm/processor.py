@@ -44,18 +44,12 @@ The following companies are registered in the system. When extracting company na
 {companies_list}
 
 **IMPORTANT - Company Name Extraction:**
-- The company name is usually mentioned in the email sender, subject line, or explicitly in the body
-- Look for context clues: email domains (e.g., @messergroup.com → "Messer"), sender names, subject lines
+- PRIORITY 1: If the SUBJECT line mentions a company name (e.g., "Consum de ACME Corp"), use that name
+- PRIORITY 2: Look at sender's email domain (e.g., @messergroup.com → "Messer")
+- PRIORITY 3: Look for explicitly stated company names in the email body
 - If you see location names (e.g., "Morell", "Tarragona") combined with company context, extract the FULL company name including location (e.g., "Messer El Morell")
 - Do NOT extract just the location as the company name unless there's no other context
-- If unsure between a location and a company name, prefer the company name mentioned in email headers or explicitly stated
-
-**CRITICAL - Ignore Email Signatures:**
-- DO NOT extract company names from email signatures/footers
-- Signatures typically contain: contact information, phone numbers, addresses, legal disclaimers
-- Common signature patterns to IGNORE: "Consorci d'Aigües de Tarragona", employee names with titles, contact blocks
-- If the SUBJECT line mentions a company name, that is usually the correct company (not the signature)
-- Example: Subject "Consum de ACME Corp" + signature "Consorci d'Aigües..." → empresa should be "ACME Corp", NOT "Consorci"
+- IGNORE email signatures/footers: "Consorci d'Aigües de Tarragona", contact blocks, legal disclaimers are NOT the company name
 
 Return ONLY a valid JSON array where each element has exactly these fields:
 - "fecha": consumption date in ISO 8601 format (YYYY-MM-DD). Accept any date format (DD/MM/YYYY, MM/YYYY, written month+year, etc.) and convert to ISO 8601.
