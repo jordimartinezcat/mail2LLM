@@ -50,6 +50,13 @@ The following companies are registered in the system. When extracting company na
 - Do NOT extract just the location as the company name unless there's no other context
 - If unsure between a location and a company name, prefer the company name mentioned in email headers or explicitly stated
 
+**CRITICAL - Ignore Email Signatures:**
+- DO NOT extract company names from email signatures/footers
+- Signatures typically contain: contact information, phone numbers, addresses, legal disclaimers
+- Common signature patterns to IGNORE: "Consorci d'Aigües de Tarragona", employee names with titles, contact blocks
+- If the SUBJECT line mentions a company name, that is usually the correct company (not the signature)
+- Example: Subject "Consum de ACME Corp" + signature "Consorci d'Aigües..." → empresa should be "ACME Corp", NOT "Consorci"
+
 Return ONLY a valid JSON array where each element has exactly these fields:
 - "fecha": consumption date in ISO 8601 format (YYYY-MM-DD). Accept any date format (DD/MM/YYYY, MM/YYYY, written month+year, etc.) and convert to ISO 8601.
   Reference period for this email: {ref_date} (year={ref_year}).
