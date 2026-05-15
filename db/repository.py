@@ -11,6 +11,7 @@ logger = logging.getLogger("processMail")
 
 _TABLE_CONSUMS    = "ga_datalake.ite_consums_datarect_test"  # Tabla de pruebas
 _TABLE_CONSORCIAT = "ga_landing.ite_bcfact_clients"
+_TABLE_CONSORCIATS = "ga_landing.ite_consorciats"  # Relación id_bcentral → Id
 _TABLE_COMPTADORS = "ga_landing.ite_comptadors"
 _TABLE_TAGS       = "ga_landing.ite_consums_tags"
 _COMENTARI = "Consum introduit des de correu electrònic"
@@ -95,18 +96,39 @@ def _find_best_match(
 
 def _get_idtag_from_consorciat(id_consorciat: str, config: DBConfig) -> int | None:
     """
-    Dado un id_consorciat (ej: CL00012), busca el idTag correspondiente:
-    1. Busca contador en ite_comptadors donde IdGC = id_consorciat, Pare IS NOT NULL, Baixa IS NULL
-    2. Obtiene el campo Id del contador
-    3. Transforma: quita "_" intermedios + añade sufijo "_CSM"
-    4. Busca en ite_consums_tags donde tag = nombre transformado
-    5. Retorna idTag
+    Dado un id_consorciat (ej: CL00091), busca el idTag correspondiente:
+    1. Busca en ite_consorciats donde id_bcentral = id_consorciat → obtiene Id
+    2. Busca contador en ite_comptadors donde IdGC = Id, Pare IS NOT NULL, Baixa IS NULL
+    3. Obtiene el campo Id del contador
+    4. Transforma: quita "_" intermedios + añade sufijo "_CSM"
+    5. Busca en ite_consums_tags donde tag = nombre transformado
+    6. Retorna idTag
     
     Retorna None si no se encuentra.
     """
     with _connect(config) as conn:
         with conn.cursor() as cur:
-            # 1. Buscar contador
+            # 1. Buscar en ite_consorciats para obtener Id (integer)
+            query_consorciat = f"""
+                SELECT "Id"
+                FROM {_TABLE_CONSORCIATS}
+                WHERE id_bcentral = %s
+                LIMIT 1
+            """
+            cur.execute(query_consorciat, (id_consorciat,))
+            row = cur.fetchone()
+            
+            if not row:
+                logger.warning(
+                    "No se encontró Id en ite_consorciats para id_bcentral '%s'",
+                    id_consorciat
+                )
+                return None
+            
+            idgc = row[0]
+            logger.debug("id_bcentral '%s' → Id=%s", id_consorciat, idgc)
+            
+            # 2. Buscar contador
             query_comptador = f"""
                 SELECT "Id"
                 FROM {_TABLE_COMPTADORS}
@@ -115,25 +137,25 @@ def _get_idtag_from_consorciat(id_consorciat: str, config: DBConfig) -> int | No
                   AND "Baixa" IS NULL
                 LIMIT 1
             """
-            cur.execute(query_comptador, (id_consorciat,))
+            cur.execute(query_comptador, (idgc,))
             row = cur.fetchone()
             
             if not row:
                 logger.warning(
-                    "No se encontró contador para id_consorciat '%s' (Pare NOT NULL, Baixa NULL)",
-                    id_consorciat
+                    "No se encontró contador para IdGC=%s (id_consorciat '%s', Pare NOT NULL, Baixa NULL)",
+                    idgc, id_consorciat
                 )
                 return None
             
             comptador_id = row[0]
-            logger.debug("Contador encontrado para %s: %s", id_consorciat, comptador_id)
+            logger.debug("Contador encontrado para IdGC=%s: %s", idgc, comptador_id)
             
-            # 2. Transformar nombre: quitar "_" intermedios + añadir "_CSM"
+            # 3. Transformar nombre: quitar "_" intermedios + añadir "_CSM"
             # Ejemplo: "ABC_123" → "ABC123_CSM"
             tag_name = comptador_id.replace("_", "") + "_CSM"
             logger.debug("Tag buscado: %s → %s", comptador_id, tag_name)
             
-            # 3. Buscar en ite_consums_tags
+            # 4. Buscar en ite_consums_tags
             query_tag = f"""
                 SELECT "idTag"
                 FROM {_TABLE_TAGS}
