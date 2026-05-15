@@ -1,0 +1,16 @@
+{
+  "427": {
+    "uid": "427",
+    "subject": "Consumos detectados - Requiere confirmación",
+    "sender": "consums@ccaait.cat",
+    "date": "2026-04-30",
+    "consumptions": [
+      {
+        "fecha": "2026-04-30",
+        "empresa": "EMPRESA EJEMPLO (CL00001)",
+        "valor": 12345.0,
+        "unidades": "m3"
+      }
+    ]
+  }
+}

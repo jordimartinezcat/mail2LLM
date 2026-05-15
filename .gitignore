@@ -9,6 +9,9 @@ config.xml
 # OAuth2 token cache (contiene refresh tokens, tratar como credencial)
 token_cache.json
 
+# Pending confirmations (estado temporal, diferente por entorno)
+pending_confirmations.json
+
 # Logs
 log/
 
