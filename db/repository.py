@@ -11,12 +11,15 @@ logger = logging.getLogger("processMail")
 
 _TABLE_CONSUMS    = "ga_datalake.ite_consums_datarect_test"  # Tabla de pruebas
 _TABLE_CONSORCIAT = "ga_landing.ite_bcfact_clients"
+_TABLE_COMPTADORS = "ga_landing.ite_comptadors"
+_TABLE_TAGS       = "ga_landing.ite_consums_tags"
 _COMENTARI = "Consum introduit des de correu electrònic"
 _COMENTARI_SENSE_DATA = "Consum introduit des de correu electrònic. Data no indicada"
+_TIPUS_CORREO = 3  # Tipo 3 = introducción desde correo
 
 _INSERT = f"""
-INSERT INTO {_TABLE_CONSUMS} (data, id_consorciat, valor, data_insercio, comentari)
-VALUES (%(data)s, %(id_consorciat)s, %(valor)s, %(data_insercio)s, %(comentari)s)
+INSERT INTO {_TABLE_CONSUMS} (data, idtag, valor, tipus, descrip)
+VALUES (%(data)s, %(idtag)s, %(valor)s, %(tipus)s, %(descrip)s)
 """
 
 
@@ -90,19 +93,79 @@ def _find_best_match(
     return None
 
 
+def _get_idtag_from_consorciat(id_consorciat: str, config: DBConfig) -> int | None:
+    """
+    Dado un id_consorciat (ej: CL00012), busca el idTag correspondiente:
+    1. Busca contador en ite_comptadors donde IdGC = id_consorciat, Pare IS NOT NULL, Baixa IS NULL
+    2. Obtiene el campo Id del contador
+    3. Transforma: quita "_" intermedios + añade sufijo "_CSM"
+    4. Busca en ite_consums_tags donde tag = nombre transformado
+    5. Retorna idTag
+    
+    Retorna None si no se encuentra.
+    """
+    with _connect(config) as conn:
+        with conn.cursor() as cur:
+            # 1. Buscar contador
+            query_comptador = f"""
+                SELECT "Id"
+                FROM {_TABLE_COMPTADORS}
+                WHERE "IdGC" = %s
+                  AND "Pare" IS NOT NULL
+                  AND "Baixa" IS NULL
+                LIMIT 1
+            """
+            cur.execute(query_comptador, (id_consorciat,))
+            row = cur.fetchone()
+            
+            if not row:
+                logger.warning(
+                    "No se encontró contador para id_consorciat '%s' (Pare NOT NULL, Baixa NULL)",
+                    id_consorciat
+                )
+                return None
+            
+            comptador_id = row[0]
+            logger.debug("Contador encontrado para %s: %s", id_consorciat, comptador_id)
+            
+            # 2. Transformar nombre: quitar "_" intermedios + añadir "_CSM"
+            # Ejemplo: "ABC_123" → "ABC123_CSM"
+            tag_name = comptador_id.replace("_", "") + "_CSM"
+            logger.debug("Tag buscado: %s → %s", comptador_id, tag_name)
+            
+            # 3. Buscar en ite_consums_tags
+            query_tag = f"""
+                SELECT "idTag"
+                FROM {_TABLE_TAGS}
+                WHERE tag = %s
+                LIMIT 1
+            """
+            cur.execute(query_tag, (tag_name,))
+            row = cur.fetchone()
+            
+            if not row:
+                logger.warning(
+                    "No se encontró tag '%s' en ite_consums_tags para id_consorciat '%s'",
+                    tag_name, id_consorciat
+                )
+                return None
+            
+            idtag = row[0]
+            logger.debug("idTag encontrado: %s → %s", tag_name, idtag)
+            return idtag
+
+
 def save_consumptions(
     consumptions: list,
     config: DBConfig,
     cache: list[tuple[str, str]],
 ) -> tuple[int, list[str]]:
     """
-    Insereix una llista de Consumption a ga_datalake.ite_consums_datarect.
+    Insereix una llista de Consumption a ga_datalake.ite_consums_datarect_test.
     - Cerca id_consorciat per similitud de text usant el cache en memòria.
-    - valor és int8: s'arrodoneix i s'avisa si hi havia decimals.
-    - Si fecha_inferida=True, afegeix 'Data no indicada' al comentari.
+    - Busca idTag a través de ite_comptadors i ite_consums_tags.
     - Retorna (nombre de files inserides, llista d'empreses no identificades).
     """
-    now = datetime.now()
     inserted = 0
     not_found: list[str] = []
 
@@ -116,10 +179,6 @@ def save_consumptions(
                 if id_match:
                     id_consorciat = id_match.group(1)
                     nom_empresa = c.empresa[:id_match.start()].strip()
-                    logger.info(
-                        "  Guardando consumo → %s (%s) | %s | %.2f %s",
-                        nom_empresa, id_consorciat, c.fecha, c.valor, c.unidades
-                    )
                 else:
                     # Fallback: si no tiene el formato esperado, intentar fuzzy matching
                     match = _find_best_match(c.empresa, cache, config.match_threshold)
@@ -132,20 +191,35 @@ def save_consumptions(
                         continue
                     
                     id_consorciat, nom_trobat, score = match
+                    nom_empresa = nom_trobat
                     logger.info(
                         "  Empresa '%s' → '%s' (id=%s, score=%.2f)",
                         c.empresa, nom_trobat, id_consorciat, score,
                     )
 
-                valor_int = round(float(c.valor))
-                comentari = _COMENTARI_SENSE_DATA if getattr(c, "fecha_inferida", False) else _COMENTARI
+                # Buscar idTag a través de ite_comptadors → ite_consums_tags
+                idtag = _get_idtag_from_consorciat(id_consorciat, config)
+                if idtag is None:
+                    logger.warning(
+                        "No se pudo obtener idTag para '%s' (id=%s) — consum omès",
+                        nom_empresa, id_consorciat
+                    )
+                    not_found.append(c.empresa or "?")
+                    continue
+
+                logger.info(
+                    "  Guardando consumo → %s (%s, idTag=%s) | %s | %.2f %s",
+                    nom_empresa, id_consorciat, idtag, c.fecha, c.valor, c.unidades
+                )
+
+                descrip = _COMENTARI_SENSE_DATA if getattr(c, "fecha_inferida", False) else _COMENTARI
 
                 cur.execute(_INSERT, {
-                    "data":          c.fecha,
-                    "id_consorciat": id_consorciat,
-                    "valor":         valor_int,
-                    "data_insercio": now,
-                    "comentari":     comentari,
+                    "data":    c.fecha,
+                    "idtag":   idtag,
+                    "valor":   float(c.valor),  # La tabla usa numeric(18,6)
+                    "tipus":   _TIPUS_CORREO,   # 3 = introducción desde correo
+                    "descrip": descrip,
                 })
                 inserted += 1
 
@@ -155,7 +229,7 @@ def save_consumptions(
         logger.info("Insertat(s) %d consum(s) a %s", inserted, _TABLE_CONSUMS)
     if not_found:
         logger.warning(
-            "%d consum(s) omès(os) per empresa no identificada: %s",
+            "%d consum(s) omès(os) per empresa no identificada o sense idTag: %s",
             len(not_found), ", ".join(not_found),
         )
 
