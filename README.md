@@ -41,6 +41,7 @@ El sistema implementa un flujo de **confirmación en dos pasos** para garantizar
 - Usa Azure OpenAI (gpt-4o-mini) para extraer datos de consumo:
   - Fecha
   - Empresa (nombre completo)
+  - **✨ NUEVO: id_bcentral** (código de cliente CLxxxxx si está presente en el email)
   - Valor (m³)
   - Unidades
 - **Soporte completo para emails HTML**: El LLM procesa correctamente tablas HTML, estilos CSS, y texto enriquecido
@@ -50,6 +51,11 @@ El sistema implementa un flujo de **confirmación en dos pasos** para garantizar
   - El LLM procesa ambas fuentes de información simultáneamente
   - Soporta múltiples PDFs por email
   - Extrae texto de todas las páginas del PDF
+- **✨ NUEVO: Identificación prioritaria por id_bcentral**:
+  - Si el email incluye explícitamente el código de cliente (ej: "ID: CL00091", "Cliente: CL00234")
+  - El LLM extrae automáticamente el id_bcentral
+  - Se identifica la empresa directamente por ID **sin fuzzy matching** → más preciso y rápido
+  - Fallback a fuzzy matching solo si no hay id_bcentral o no se encuentra en BD
 - Guarda los consumos como **pendientes de confirmación** en `pending_confirmations.json`
 - Envía un correo HTML al administrador solicitando confirmación
 - Mueve el mensaje original a `0_Processats`
@@ -391,6 +397,7 @@ Per REBUTJAR, simplement ignora aquest missatge.
 | Extracción LLM (Azure OpenAI gpt-4o-mini) | ✅ Funcional | Sin parámetros extras (temperature, etc.) |
 | Soporte emails HTML | ✅ Funcional | LLM procesa tablas HTML correctamente |
 | **Soporte archivos PDF adjuntos** | ✅ **NUEVO** | Extrae texto de PDFs y combina con email |
+| **Identificación por id_bcentral** | ✅ **NUEVO** | Extrae CLxxxxx del email, identifica sin fuzzy matching |
 | Confirmación 2 pasos | ✅ Funcional | Emails en catalán, diseño profesional |
 | Confirmación TOTAL (OK) | ✅ Funcional | Detecta: OK, SÍ, CONFIRMAR, TOTS, ACEPTAR |
 | Confirmación SELECTIVA (1,3,5) | ⚠️ **CON BUGS** | Regex captura números del texto citado |
@@ -491,6 +498,120 @@ El usuario menciona ejecutar desde NIFI:
 - Al confirmar SELECTIVA (1,3) → se elimina solo esos consumos, resto queda
 - Archivo se limpia automáticamente al confirmar
 
+---
+
+## 🆔 Identificación de Empresas: Prioridad id_bcentral
+
+**✨ NUEVO (Mayo 2026)**: El sistema ahora prioriza la identificación por `id_bcentral` antes del fuzzy matching.
+
+### Flujo de Identificación (3 niveles de prioridad)
+
+```mermaid
+Email → LLM extrae datos → ¿Tiene id_bcentral? 
+                              ├─ SÍ → Buscar en bcfact_clients por ID
+                              │        ├─ ✅ Encontrado → Usar directamente
+                              │        └─ ❌ No existe → Fallback a fuzzy
+                              └─ NO → Fuzzy matching por nombre
+```
+
+### **Prioridad 1: id_bcentral explícito en el email**
+
+Si el email incluye el código de cliente, el LLM lo extrae automáticamente:
+
+**Ejemplo de email:**
+```
+Cliente: MESSER IBÉRICA DE GASES S.A.U - EL MORELL
+ID Client: CL00091
+Consum: 1.250,50 m³
+Data: 30/04/2026
+```
+
+**Log del sistema:**
+```
+INFO: Identificació per id_bcentral: 'MESSER EL MORELL' (id=CL00091) — sense fuzzy matching
+INFO: id_bcentral 'CL00091' verificat → Empresa: 'MESSER IBERICA DE GASES SAU - EL MORELL'
+INFO: Guardando consumo → MESSER IBERICA DE GASES SAU (CL00091, idTag=987) | 2026-04-30 | 1250.50 m3
+```
+
+**Ventajas:**
+- ✅ **Identificación precisa al 100%** - sin ambigüedades
+- ✅ **Más rápido** - no compara con 128 empresas
+- ✅ **Evita errores** - nombres similares no causan confusión
+- ✅ **Verifica existencia** - si el ID no existe en BD, usa fallback
+
+**Formatos reconocidos por el LLM:**
+- `ID: CL00091`
+- `Código: CL00234`
+- `Client: CL00456`
+- `id_bcentral: CL00789`
+- `ID Client: CL00123`
+
+### **Prioridad 2: Formato "(ID)" en el nombre**
+
+Si el nombre de empresa ya viene con formato `"NOMBRE (CL00123)"` del procesamiento previo:
+
+```python
+empresa = "MESSER EL MORELL (CL00091)"
+# Sistema extrae CL00091 automáticamente
+```
+
+### **Prioridad 3: Fuzzy Matching (Fallback)**
+
+Solo si no hay `id_bcentral` o no se encuentra en BD:
+
+```python
+# Normaliza ambos textos: minúsculas, sin acentos
+empresa_norm = "messer el morell"
+# Compara con todas las empresas usando difflib
+score = SequenceMatcher(None, empresa_norm, alias_bd).ratio()
+# Si score >= 0.6 → Match encontrado
+```
+
+**Log del sistema:**
+```
+INFO: Identificació per fuzzy matching: 'Messer Morell' → 'MESSER IBERICA DE GASES SAU' (id=CL00091, score=0.87)
+```
+
+### Configuración del Prompt LLM
+
+El sistema envía al LLM una lista de empresas registradas para ayudar en la extracción:
+
+```
+**IMPORTANT - Known Companies:**
+- MESSER IBERICA DE GASES SAU - EL MORELL (ID: CL00091)
+- CARBUROS METALICOS SA (ID: CL00234)
+- AIR LIQUIDE ESPAÑA SA (ID: CL00456)
+... (primeras 50 empresas)
+```
+
+### Testing
+
+Ejecutar el script de prueba:
+```bash
+python test_id_bcentral.py
+```
+
+**Output esperado:**
+```
+✅ Test 1 (con id_bcentral): PASS
+   - IDs extraídos: ['CL00091', 'CL00234']
+   - Identificación directa sin fuzzy matching
+
+✅ Test 2 (sin id_bcentral): PASS
+   - Fallback a fuzzy matching
+   - Score > 0.6 → Match encontrado
+```
+
+### Casos de Error
+
+| Situación | Comportamiento | Log |
+|-----------|----------------|-----|
+| `id_bcentral` no existe en BD | Fallback a fuzzy matching | `⚠️ id_bcentral 'CL99999' NO trobat — intentant fuzzy` |
+| Fuzzy score < 0.6 | Consumo omitido | `❌ Empresa no identificada: 'XYZ Corp' (llindar=0.6)` |
+| Sin `id_bcentral` y sin match | Consumo omitido | `❌ consum omès (empresa no identificada)` |
+
+---
+
 ### 🔧 Utilidades de Test
 
 ```bash
@@ -499,6 +620,9 @@ python test_send_email.py
 
 # Enviar email de prueba texto plano
 python test_send_email.py --text
+
+# Test extracción id_bcentral (valida LLM + BD)
+python test_id_bcentral.py
 
 # Obtener nuevo token OAuth2
 python refresh_token.py
