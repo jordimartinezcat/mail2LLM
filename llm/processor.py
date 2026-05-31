@@ -59,6 +59,7 @@ Return ONLY a valid JSON array where each element has exactly these fields:
   * If only a month name is found but NO year: use that month with year {ref_year}. Use the last day of that month.
   * If NO date at all is found in the body: use null. Do NOT use the reference period as a fallback — return null so the system can handle it.
 - "empresa": name, short identifier, nickname, or code of the company. **Extract the FULL company name, not just the location**. Use context from email headers, sender, and subject. If not found, use null.
+- "id_bcentral": company ID code if explicitly present in the email (format: CLxxxxx, like CL00091, CL01234). Look for patterns like "ID:", "Código:", "Client:", "id_bcentral:", or similar labels followed by CLxxxxx. If not found, use null. **This is PRIORITY - if present, it uniquely identifies the company**.
 - "valor": decimal number with the consumption value in cubic meters. Remove thousand separators (dots or spaces) and convert decimal commas to dots. Examples: "1.250,50" → 1250.5 | "342,00" → 342.0. If not found, use null.
 - "unidades": always "m3".
 
@@ -78,6 +79,7 @@ class Consumption:
     empresa: str | None
     valor: float | None
     unidades: str = "m3"
+    id_bcentral: str | None = None  # ID de la empresa (ej: CL00091) si está presente en el email
     fecha_inferida: bool = False  # True si la fecha s'ha inferit del correu (no estava al cos)
 
     def to_dict(self) -> dict:
@@ -86,6 +88,7 @@ class Consumption:
             "empresa": self.empresa,
             "valor": self.valor,
             "unidades": self.unidades,
+            "id_bcentral": self.id_bcentral,
         }
 
 
@@ -147,12 +150,13 @@ def extract_consumption(
         "items": {
             "type": "object",
             "properties": {
-                "fecha":   {"type": ["string", "null"], "description": "ISO 8601 date (YYYY-MM-DD) or null"},
-                "empresa": {"type": ["string", "null"], "description": "Company name or identifier"},
-                "valor":   {"type": ["number", "null"], "description": "Consumption in cubic meters"},
-                "unidades":{"type": "string", "enum": ["m3"]},
+                "fecha":       {"type": ["string", "null"], "description": "ISO 8601 date (YYYY-MM-DD) or null"},
+                "empresa":     {"type": ["string", "null"], "description": "Company name or identifier"},
+                "id_bcentral": {"type": ["string", "null"], "description": "Company ID (CLxxxxx format) or null"},
+                "valor":       {"type": ["number", "null"], "description": "Consumption in cubic meters"},
+                "unidades":    {"type": "string", "enum": ["m3"]},
             },
-            "required": ["fecha", "empresa", "valor", "unidades"],
+            "required": ["fecha", "empresa", "id_bcentral", "valor", "unidades"],
         },
     }
 
@@ -313,4 +317,5 @@ def _build_consumption(data: dict) -> "Consumption":
         empresa=data.get("empresa"),
         valor=valor,
         unidades=data.get("unidades", "m3"),
+        id_bcentral=data.get("id_bcentral"),
     )

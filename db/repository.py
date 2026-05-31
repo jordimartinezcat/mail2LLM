@@ -198,15 +198,44 @@ def save_consumptions(
     with _connect(config) as conn:
         with conn.cursor() as cur:
             for c in consumptions:
-                # El nombre ya viene normalizado con formato "NOMBRE (ID)"
-                # Extraer el ID del formato "NOMBRE (CL00123)"
-                import re
-                id_match = re.search(r'\(([^)]+)\)$', c.empresa)
-                if id_match:
-                    id_consorciat = id_match.group(1)
-                    nom_empresa = c.empresa[:id_match.start()].strip()
-                else:
-                    # Fallback: si no tiene el formato esperado, intentar fuzzy matching
+                id_consorciat = None
+                nom_empresa = c.empresa or "?"
+                
+                # PRIORIDAD 1: Usar id_bcentral si viene en el consumo extraído por el LLM
+                if c.id_bcentral:
+                    id_consorciat = c.id_bcentral.strip().upper()
+                    logger.info(
+                        "  Identificació per id_bcentral: '%s' (id=%s) — sense fuzzy matching",
+                        c.empresa, id_consorciat,
+                    )
+                    # Verificar que existe en la BD antes de continuar
+                    query_verify = f"SELECT alias FROM {_TABLE_CONSORCIAT} WHERE number = %s LIMIT 1"
+                    cur.execute(query_verify, (id_consorciat,))
+                    row = cur.fetchone()
+                    if row:
+                        nom_empresa = row[0]  # Usar el nombre oficial de la BD
+                        logger.info("  id_bcentral '%s' verificat → Empresa: '%s'", id_consorciat, nom_empresa)
+                    else:
+                        logger.warning(
+                            "  id_bcentral '%s' NO trobat a bcfact_clients — intentant fuzzy matching",
+                            id_consorciat
+                        )
+                        id_consorciat = None  # Forzar fallback
+                
+                # PRIORIDAD 2: Extraer ID del formato "NOMBRE (CL00123)" en el nombre de empresa
+                if not id_consorciat:
+                    import re
+                    id_match = re.search(r'\(([^)]+)\)$', c.empresa or "")
+                    if id_match:
+                        id_consorciat = id_match.group(1).strip().upper()
+                        nom_empresa = c.empresa[:id_match.start()].strip()
+                        logger.info(
+                            "  Identificació per format '(ID)': '%s' → id=%s",
+                            nom_empresa, id_consorciat
+                        )
+                
+                # PRIORIDAD 3 (Fallback): Fuzzy matching por nombre
+                if not id_consorciat:
                     match = _find_best_match(c.empresa, cache, config.match_threshold)
                     if match is None:
                         logger.warning(
@@ -219,7 +248,7 @@ def save_consumptions(
                     id_consorciat, nom_trobat, score = match
                     nom_empresa = nom_trobat
                     logger.info(
-                        "  Empresa '%s' → '%s' (id=%s, score=%.2f)",
+                        "  Identificació per fuzzy matching: '%s' → '%s' (id=%s, score=%.2f)",
                         c.empresa, nom_trobat, id_consorciat, score,
                     )
 
