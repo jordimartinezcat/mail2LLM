@@ -39,33 +39,46 @@ The data may appear in the email body or in attached PDF files.
 - From: {sender}
 - Subject: {subject}
 
+**IMPORTANT - Email Format Recognition:**
+This email is typically a REPLY (RE:) to a monthly consumption request. The actual consumption data appears in the QUOTED/CITED part of the email (after "De:", "Enviado el:", "From:", etc.).
+
+Look for a TABLE structure with these columns (in Spanish or Catalan):
+- "Id" → company ID (CLxxxxx format) → extract as id_bcentral
+- "Nom d'empresa" or "Nombre empresa" → company name → extract as empresa
+- "Consum comptador" or "Consumo contador" → consumption value in m³ → extract as valor
+
+Example table format:
+```
+Id              Nom d'empresa                   Consum comptador
+CL00501         MESSER MORELL desde R.Materials  1093780
+CL00234         CARBUROS METALICOS SA            456789
+```
+
+**CRITICAL EXTRACTION RULES:**
+1. **IGNORE email signatures/footers**: "Consorci d'Aigües de Tarragona", contact blocks, disclaimers, legal text
+2. **DO NOT extract** "Consorci d'Aigües de Tarragona" or "CAT" as empresa - they are the email sender organization
+3. **Look in the QUOTED part** of reply emails (after "De:", "Enviado el:", "From:")
+4. **Table data is what matters** - ignore all surrounding text
+5. If the subject contains "Període:" or period mention (e.g., "Maig 2026"), use the last day of that month as fecha
+
 **IMPORTANT - Known Companies:**
 The following companies are registered in the system. When extracting company names from the email, try to match them with these registered names or their common abbreviations:
 {companies_list}
 
-**IMPORTANT - Company Name Extraction:**
-- PRIORITY 1: If the SUBJECT line mentions a company name (e.g., "Consum de ACME Corp"), use that name
-- PRIORITY 2: Look at sender's email domain (e.g., @messergroup.com → "Messer")
-- PRIORITY 3: Look for explicitly stated company names in the email body
-- If you see location names (e.g., "Morell", "Tarragona") combined with company context, extract the FULL company name including location (e.g., "Messer El Morell")
-- Do NOT extract just the location as the company name unless there's no other context
-- IGNORE email signatures/footers: "Consorci d'Aigües de Tarragona", contact blocks, legal disclaimers are NOT the company name
-
 Return ONLY a valid JSON array where each element has exactly these fields:
-- "fecha": consumption date in ISO 8601 format (YYYY-MM-DD). Accept any date format (DD/MM/YYYY, MM/YYYY, written month+year, etc.) and convert to ISO 8601.
-  Reference period for this email: {ref_date} (year={ref_year}).
+- "fecha": consumption date in ISO 8601 format (YYYY-MM-DD).
   Rules:
+  * If a PERIOD is mentioned (e.g., "Període: Maig 2026", "Periodo: Mayo 2026"): use the LAST DAY of that month (2026-05-31).
   * If a full date is explicitly stated in the body: convert it to ISO 8601 and use it.
   * If only a month name is found but NO year: use that month with year {ref_year}. Use the last day of that month.
-  * If NO date at all is found in the body: use null. Do NOT use the reference period as a fallback — return null so the system can handle it.
-- "empresa": name, short identifier, nickname, or code of the company. **Extract the FULL company name, not just the location**. Use context from email headers, sender, and subject. If not found, use null.
-- "id_bcentral": company ID code if explicitly present in the email (format: CLxxxxx, like CL00091, CL01234). Look for patterns like "ID:", "Código:", "Client:", "id_bcentral:", or similar labels followed by CLxxxxx. If not found, use null. **This is PRIORITY - if present, it uniquely identifies the company**.
-- "valor": decimal number with the consumption value in cubic meters. Remove thousand separators (dots or spaces) and convert decimal commas to dots. Examples: "1.250,50" → 1250.5 | "342,00" → 342.0. If not found, use null.
+  * If NO date at all is found: use null.
+- "empresa": company name from the "Nom d'empresa" column. Extract the FULL name as it appears. If not found, use null.
+- "id_bcentral": company ID from the "Id" column (format: CLxxxxx, like CL00501, CL00234). **This is PRIORITY - if present, it uniquely identifies the company**. If not found, use null.
+- "valor": decimal number from "Consum comptador" column in cubic meters. If the value is a large integer (e.g., 1093780), keep it as is - do NOT divide or modify it. If not found, use null.
 - "unidades": always "m3".
 
 If there is only one record, return a single-element array.
 If no consumption data is found, return an empty array [].
-The data may appear as a table, as an aligned list (company on the left, value on the right), or as free text.
 Do NOT add any explanation or markdown. Output only the JSON array. /no_think
 
 Email:
