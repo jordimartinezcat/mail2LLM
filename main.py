@@ -55,6 +55,9 @@ def _normalize_company_names(
     Normaliza los nombres de empresa usando el caché de la BD.
     Reemplaza el nombre extraído por el LLM con el formato: "NOMBRE_BD (ID)"
     
+    PRIORIDAD 1: Si viene id_bcentral, buscar directamente por ID
+    PRIORIDAD 2 (fallback): Fuzzy matching por nombre
+    
     Returns:
         (consumptions_normalizados, empresas_no_encontradas)
     """
@@ -65,16 +68,37 @@ def _normalize_company_names(
     not_found = []
     
     for c in consumptions:
-        match = _find_company_in_cache(c.empresa, cache, threshold)
-        if match is None:
-            not_found.append(c.empresa)
-            continue
+        id_bd = None
+        nombre_bd = None
         
-        id_bd, nombre_bd, score = match
-        logger.info(
-            "  Normalización: '%s' → '%s' (ID: %s, coincidencia: %.1f%%)",
-            c.empresa, nombre_bd, id_bd, score * 100
-        )
+        # PRIORIDAD 1: Buscar por id_bcentral si viene en el consumo
+        if c.id_bcentral:
+            id_search = c.id_bcentral.strip().upper()
+            logger.info("  Buscant per id_bcentral: '%s'", id_search)
+            # Buscar en caché (id, nombre)
+            for cache_id, cache_name in cache:
+                if cache_id.upper() == id_search:
+                    id_bd = cache_id
+                    nombre_bd = cache_name
+                    logger.info("  ✅ id_bcentral '%s' trobat → '%s'", id_search, nombre_bd)
+                    break
+            
+            if not id_bd:
+                logger.warning("  ⚠️  id_bcentral '%s' NO trobat a cache — fallback a fuzzy matching", id_search)
+        
+        # PRIORIDAD 2 (fallback): Fuzzy matching por nombre
+        if not id_bd:
+            match = _find_company_in_cache(c.empresa, cache, threshold)
+            if match is None:
+                not_found.append(c.empresa)
+                continue
+            
+            id_bd, nombre_bd, score = match
+            logger.info(
+                "  Normalización: '%s' → '%s' (ID: %s, coincidencia: %.1f%%)",
+                c.empresa, nombre_bd, id_bd, score * 100
+            )
+        
         # Crear nuevo consumption con nombre normalizado "NOMBRE (ID)"
         normalized.append(
             Consumption(
@@ -83,6 +107,7 @@ def _normalize_company_names(
                 valor=c.valor,
                 unidades=c.unidades,
                 fecha_inferida=getattr(c, "fecha_inferida", False),
+                id_bcentral=c.id_bcentral,  # Preservar id_bcentral
             )
         )
     
