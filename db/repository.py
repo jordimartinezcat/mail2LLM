@@ -203,29 +203,43 @@ def save_consumptions(
                 
                 # PRIORIDAD 1: Usar id_bcentral si viene en el consumo extraído por el LLM
                 if c.id_bcentral:
-                    id_consorciat = c.id_bcentral.strip().upper()
+                    id_bcentral_str = c.id_bcentral.strip().upper()
                     logger.info(
-                        "  Identificació per id_bcentral: '%s' (id=%s) — sense fuzzy matching",
-                        c.empresa, id_consorciat,
+                        "  Identificació per id_bcentral: '%s' (id=%s) — verificant...",
+                        c.empresa, id_bcentral_str,
                     )
-                    # Verificar que existe en la BD antes de continuar
+                    # 1) Verificar que existe en ite_bcfact_clients
                     query_verify = f"SELECT alias FROM {_TABLE_CONSORCIAT} WHERE number = %s LIMIT 1"
-                    cur.execute(query_verify, (id_consorciat,))
+                    cur.execute(query_verify, (id_bcentral_str,))
                     row = cur.fetchone()
                     if row:
                         nom_empresa = row[0]  # Usar el nombre oficial de la BD
-                        logger.info("  id_bcentral '%s' verificat → Empresa: '%s'", id_consorciat, nom_empresa)
+                        logger.info("  ✅ id_bcentral '%s' verificat a bcfact_clients → Empresa: '%s'", id_bcentral_str, nom_empresa)
+                        
+                        # 2) Buscar el Id (integer) en ite_consorciat
+                        query_id = f"SELECT id FROM {_TABLE_CONSORCIATS} WHERE id_bcentral = %s LIMIT 1"
+                        cur.execute(query_id, (id_bcentral_str,))
+                        row_id = cur.fetchone()
+                        if row_id:
+                            id_consorciat = row_id[0]  # Este es el Id numérico (ej: 157)
+                            logger.info("  ✅ Id obtingut d'ite_consorciat: %s", id_consorciat)
+                        else:
+                            logger.warning(
+                                "  ⚠️  id_bcentral '%s' trobat a bcfact_clients però NO a ite_consorciat — fallback a fuzzy",
+                                id_bcentral_str
+                            )
+                            id_consorciat = None
                     else:
                         logger.warning(
-                            "  id_bcentral '%s' NO trobat a bcfact_clients — intentant fuzzy matching",
-                            id_consorciat
+                            "  ⚠️  id_bcentral '%s' NO trobat a bcfact_clients — intentant fuzzy matching amb nom: '%s'",
+                            id_bcentral_str, c.empresa
                         )
                         id_consorciat = None  # Forzar fallback
                 
                 # PRIORIDAD 2: Extraer ID del formato "NOMBRE (CL00123)" en el nombre de empresa
-                if not id_consorciat:
+                if not id_consorciat and c.empresa:
                     import re
-                    id_match = re.search(r'\(([^)]+)\)$', c.empresa or "")
+                    id_match = re.search(r'\(([^)]+)\)$', c.empresa)
                     if id_match:
                         id_consorciat = id_match.group(1).strip().upper()
                         nom_empresa = c.empresa[:id_match.start()].strip()
@@ -235,20 +249,34 @@ def save_consumptions(
                         )
                 
                 # PRIORIDAD 3 (Fallback): Fuzzy matching por nombre
-                if not id_consorciat:
+                if not id_consorciat and c.empresa:
+                    logger.info(
+                        "  Intentant fuzzy matching per nom: '%s' (threshold=%.2f)",
+                        c.empresa, config.match_threshold
+                    )
                     match = _find_best_match(c.empresa, cache, config.match_threshold)
                     if match is None:
-                        logger.warning(
-                            "Empresa no identificada: '%s' (llindar=%.2f) — consum omès (data=%s, valor=%s)",
-                            c.empresa, config.match_threshold, c.fecha, c.valor,
-                        )
-                        not_found.append(c.empresa or "?")
-                        continue
+                        # Intentar con nombre simplificado (quitar "desde R.Materials", etc.)
+                        simplified_name = re.sub(r'\s+(desde|from|de)\s+.*$', '', c.empresa, flags=re.IGNORECASE).strip()
+                        if simplified_name != c.empresa:
+                            logger.info(
+                                "  Reintentant amb nom simplificat: '%s'",
+                                simplified_name
+                            )
+                            match = _find_best_match(simplified_name, cache, config.match_threshold)
+                        
+                        if match is None:
+                            logger.warning(
+                                "❌ Empresa no identificada: '%s' (llindar=%.2f) — consum omès (data=%s, valor=%s)",
+                                c.empresa, config.match_threshold, c.fecha, c.valor,
+                            )
+                            not_found.append(c.empresa or "?")
+                            continue
                     
                     id_consorciat, nom_trobat, score = match
                     nom_empresa = nom_trobat
                     logger.info(
-                        "  Identificació per fuzzy matching: '%s' → '%s' (id=%s, score=%.2f)",
+                        "  ✅ Identificació per fuzzy matching: '%s' → '%s' (id=%s, score=%.2f)",
                         c.empresa, nom_trobat, id_consorciat, score,
                     )
 

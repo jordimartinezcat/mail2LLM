@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Email real copiado del buzón
+# Email real copiado del buzón (ACTUALIZADO con ID correcto)
 REAL_EMAIL_BODY = """
 ATENCIÓ: Aquest correu electrònic s'ha enviat des de fora de l'organització. No cliqueu enllaços ni obriu arxius adjunts a menys que reconegueu al remitent i sapigueu que el contingut és segur.
 
@@ -44,7 +44,7 @@ Premeu "Respondre a aquest correu" i ompliu les cel·les resaltades en groc de l
 Id
 Nom d'empresa
 Consum comptador
-CL00501
+CL00094
 MESSER MORELL desde R.Materials
 1093780
 
@@ -137,7 +137,7 @@ def test_real_email():
     print("\n" + "="*80)
     
     # Validación
-    expected_id = "CL00501"
+    expected_id = "CL00094"  # ID correcto (corregido desde CL00501)
     expected_valor = 1093780
     expected_fecha = "2026-05-31"  # Último día de mayo 2026
     

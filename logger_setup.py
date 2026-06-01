@@ -36,14 +36,14 @@ def setup_logger(name: str = "processMail") -> logging.Logger:
         encoding="utf-8",
         utc=False,
     )
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     # El sufijo de los ficheros rotados tendrá el formato YYYY-MM-DD
     file_handler.suffix = "%Y-%m-%d"
 
     # Handler de consola
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(formatter)
 
     logger.addHandler(file_handler)
