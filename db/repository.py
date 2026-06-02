@@ -9,7 +9,7 @@ from config.loader import DBConfig
 
 logger = logging.getLogger("processMail")
 
-_TABLE_CONSUMS    = "ga_datalake.ite_consums_datarect_test"  # Tabla de pruebas
+_TABLE_CONSUMS    = "ga_datalake.ite_consums_datarect"  # Tabla de pruebas
 _TABLE_CONSORCIAT = "ga_landing.ite_bcfact_clients"
 _TABLE_CONSORCIATS = "ga_landing.ite_consorciat"  # Relación id_bcentral → Id (sin 's')
 _TABLE_COMPTADORS = "ga_landing.ite_comptadors"
