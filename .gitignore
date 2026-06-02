@@ -39,3 +39,6 @@ build/
 *.njsproj
 *.sln
 *.sw?
+
+# Executor
+run_mail2LLM.bat
