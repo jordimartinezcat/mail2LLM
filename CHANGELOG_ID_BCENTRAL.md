@@ -1,3 +1,35 @@
+# Changelog - mail2LLM
+
+---
+
+## 📅 2026-06-03 - Filtrado de Filas No Insertables
+
+**Integración con TemplateConsums**: El sistema ahora filtra automáticamente las filas marcadas como no insertables antes de procesarlas con el LLM.
+
+**Cambios**:
+- `email_io/reader.py`: Nueva función `_remove_non_insertable_rows()` 
+  - Detecta y elimina filas con atributo `data-insertar-bd="false"`
+  - Pattern regex: `r'<tr\s+data-insertar-bd\s*=\s*["\']false["\']\s*>.*?</tr>'`
+  - Se ejecuta antes de extraer texto del HTML
+  - Registra en log el número de filas removidas
+
+**Beneficio**: Evita que el LLM procese filas informativas que no deben insertarse en la base de datos (por ejemplo, totales, subtotales, filas de referencia).
+
+---
+
+## 📅 2026-06-02 - Migración a Tabla de Producción
+
+**Cambio de entorno**: El sistema ahora inserta consumos directamente en la tabla de producción.
+
+**Cambios**:
+- `db/repository.py`: 
+  - `_TABLE_CONSUMS` cambiado de `ga_datalake.ite_consums_datarect_test` a `ga_datalake.ite_consums_datarect`
+  - Todos los consumos confirmados se insertan ahora en la tabla definitiva de producción
+
+**Impacto**: El sistema está operativo en modo producción. Los datos insertados son definitivos y visibles en el sistema goAigua.
+
+---
+
 # Resumen de Cambios: Identificación Prioritaria por id_bcentral
 
 **Fecha**: 31 Mayo 2026  

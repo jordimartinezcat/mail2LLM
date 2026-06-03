@@ -33,6 +33,33 @@ def _decode_header_value(value: str | None) -> str:
     return "".join(decoded_parts)
 
 
+def _remove_non_insertable_rows(html: str) -> str:
+    """
+    Elimina del HTML las filas de tabla marcadas con data-insertar-bd="false".
+    Estas filas son solo informativas y no deben procesarse para insertar en BD.
+    
+    Args:
+        html: Contenido HTML del email
+        
+    Returns:
+        HTML sin las filas marcadas como no insertables
+    """
+    import re
+    
+    # Patrón para detectar <tr data-insertar-bd="false">...</tr>
+    # Usa DOTALL para capturar contenido multilínea
+    pattern = r'<tr\s+data-insertar-bd\s*=\s*["\']false["\']\s*>.*?</tr>'
+    
+    cleaned_html = re.sub(pattern, '', html, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Contar cuántas filas se eliminaron (solo para logging)
+    removed_count = len(re.findall(pattern, html, flags=re.DOTALL | re.IGNORECASE))
+    if removed_count > 0:
+        logger.info("Eliminadas %d filas marcadas como no insertables (data-insertar-bd=false)", removed_count)
+    
+    return cleaned_html
+
+
 def _extract_plain_body(msg: Message) -> str:
     """
     Extrae el cuerpo en texto plano de un mensaje (soporta multipart).
@@ -78,6 +105,9 @@ def _extract_plain_body(msg: Message) -> str:
     if plain_text:
         return _clean_body(_remove_email_thread(plain_text))
     elif html_text:
+        # IMPORTANTE: Eliminar filas no insertables ANTES de procesar el HTML
+        html_text = _remove_non_insertable_rows(html_text)
+        
         # Extraer texto básico de HTML (eliminar tags)
         import re
         text = re.sub(r'<style[^>]*>.*?</style>', '', html_text, flags=re.DOTALL | re.IGNORECASE)

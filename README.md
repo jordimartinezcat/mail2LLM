@@ -8,18 +8,25 @@ Procesa correos electrónicos con consumos de agua y los inserta en base de dato
 
 **Para nueva sesión de desarrollo:**
 
-1. **Estado actual**: Sistema funcional con confirmación en 2 pasos, emails HTML en catalán
+1. **Estado actual**: Sistema funcional con confirmación en 2 pasos, emails HTML en catalán, tabla de producción activa
 2. **Problema activo**: Confirmación selectiva (1,3,5) tiene bugs en regex - captura números del texto citado
 3. **Workaround**: Usar confirmación total (OK) hasta resolver bug
 4. **Ejecución**: Se ejecuta desde Apache NIFI cada 5 minutos (recomendado, no 1 min)
-5. **Base de datos**: Deshabilitada por defecto en config (`enabled=false`)
+5. **Base de datos**: 
+   - **✅ PRODUCCIÓN**: Inserción activa en `ga_datalake.ite_consums_datarect` (tabla definitiva)
+   - Cambio reciente: Migración de `ite_consums_datarect_test` a tabla de producción
 6. **Archivos críticos**:
    - `main.py` línea ~167: Regex bugueado para números selectivos
    - `pending_confirmations.json`: Estado actual de pendientes
    - `config.xml`: No en git, configuración local completa
    - `email_io/notifier.py`: Emails HTML en catalán
+   - `email_io/reader.py`: Filtrado de filas HTML con `data-insertar-bd="false"`
+   - `db/repository.py`: Inserción en tabla de producción
 
-**Último commit**: `cf7507b` (12 May 2026) - Sistema confirmación 2 pasos
+**Últimos cambios**:
+- **3 Jun 2026**: Filtrado inteligente de filas HTML no insertables
+- **2 Jun 2026**: Migración a tabla de producción `ite_consums_datarect`
+- **12 May 2026**: Sistema confirmación 2 pasos
 
 **Comandos útiles**:
 ```bash
@@ -45,6 +52,11 @@ El sistema implementa un flujo de **confirmación en dos pasos** para garantizar
   - Valor (m³)
   - Unidades
 - **Soporte completo para emails HTML**: El LLM procesa correctamente tablas HTML, estilos CSS, y texto enriquecido
+- **✨ NUEVO: Filtrado inteligente de filas HTML**:
+  - Elimina automáticamente filas de tabla marcadas con `data-insertar-bd="false"` ANTES de procesarlas
+  - Permite incluir filas informativas/resumen en emails que NO deben procesarse
+  - Ejemplo: `<tr data-insertar-bd="false"><td>TOTAL: 1500 m³</td></tr>`
+  - Útil para enviar contexto adicional sin riesgo de duplicados o datos erróneos
 - **✨ NUEVO: Soporte para archivos PDF adjuntos**: 
   - Detecta y extrae automáticamente el contenido de todos los PDFs adjuntos
   - Combina el cuerpo del email con el contenido de los PDFs
