@@ -53,10 +53,16 @@ El sistema implementa un flujo de **confirmación en dos pasos** para garantizar
   - Unidades
 - **Soporte completo para emails HTML**: El LLM procesa correctamente tablas HTML, estilos CSS, y texto enriquecido
 - **✨ NUEVO: Filtrado inteligente de filas HTML**:
-  - Elimina automáticamente filas de tabla marcadas con `data-insertar-bd="false"` ANTES de procesarlas
-  - Permite incluir filas informativas/resumen en emails que NO deben procesarse
-  - Ejemplo: `<tr data-insertar-bd="false"><td>TOTAL: 1500 m³</td></tr>`
-  - Útil para enviar contexto adicional sin riesgo de duplicados o datos erróneos
+  - Los emails HTML pueden incluir filas marcadas con `data-insertar-bd="false"` 
+  - Estas filas se eliminan del HTML **ANTES** de enviarlo al LLM
+  - El LLM **nunca ve** esas filas → No las extrae → **No se insertan en la BD**
+  - Ejemplo en el email recibido:
+    ```html
+    <tr><td>Empresa A</td><td>1000 m³</td></tr>
+    <tr data-insertar-bd="false"><td>TOTAL: 1500 m³</td></tr>
+    ```
+  - Útil para: totales, subtotales, notas informativas, filas de referencia
+  - El sistema genera emails con TemplateConsums que incluye este atributo automáticamente
 - **✨ NUEVO: Soporte para archivos PDF adjuntos**: 
   - Detecta y extrae automáticamente el contenido de todos los PDFs adjuntos
   - Combina el cuerpo del email con el contenido de los PDFs

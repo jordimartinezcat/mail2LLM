@@ -6,14 +6,37 @@
 
 **Integración con TemplateConsums**: El sistema ahora filtra automáticamente las filas marcadas como no insertables antes de procesarlas con el LLM.
 
-**Cambios**:
+### ¿Cómo funciona?
+
+1. **Email HTML llega** con filas marcadas con `data-insertar-bd="false"`:
+   ```html
+   <tr><td>Empresa A</td><td>1000 m³</td></tr>
+   <tr data-insertar-bd="false"><td>TOTAL: 1500 m³</td></tr>
+   <tr><td>Empresa B</td><td>500 m³</td></tr>
+   ```
+
+2. **Función `_remove_non_insertable_rows()`** elimina esas filas **ANTES** de extraer texto:
+   ```html
+   <tr><td>Empresa A</td><td>1000 m³</td></tr>
+   <tr><td>Empresa B</td><td>500 m³</td></tr>
+   ```
+
+3. **El LLM recibe el HTML limpio** → Solo ve las filas insertables
+
+4. **El LLM extrae solo los consumos visibles** → No extrae el TOTAL
+
+5. **Resultado**: Solo se insertan en BD los consumos reales (Empresa A y B), nunca el TOTAL
+
+### Cambios técnicos:
+
 - `email_io/reader.py`: Nueva función `_remove_non_insertable_rows()` 
-  - Detecta y elimina filas con atributo `data-insertar-bd="false"`
   - Pattern regex: `r'<tr\s+data-insertar-bd\s*=\s*["\']false["\']\s*>.*?</tr>'`
-  - Se ejecuta antes de extraer texto del HTML
+  - Se ejecuta antes de `_extract_plain_body()` → antes de procesar con el LLM
   - Registra en log el número de filas removidas
 
-**Beneficio**: Evita que el LLM procese filas informativas que no deben insertarse en la base de datos (por ejemplo, totales, subtotales, filas de referencia).
+### Beneficio: 
+
+Los remitentes (TemplateConsums u otros) pueden enviar filas informativas que **nunca llegarán al LLM** y por tanto **nunca se procesarán ni insertarán en BD**, simplemente marcándolas con el atributo HTML.
 
 ---
 
