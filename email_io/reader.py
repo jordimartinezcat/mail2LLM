@@ -60,10 +60,67 @@ def _remove_non_insertable_rows(html: str) -> str:
     return cleaned_html
 
 
+def _extract_table_from_html(html: str) -> str:
+    """
+    Extrae la tabla HTML con id="taula_dades" del email INCLUYENDO el contexto previo.
+    Busca desde el texto "Període:" o "Período:" hasta el final de la tabla para capturar
+    la fecha del período (ej: "Juliol 2026") que el LLM necesita extraer.
+    
+    Esta tabla contiene los datos de consumo con estructura:
+    - Primera celda contiene formato CLxxxxx-idtag para inserción directa en BD
+    - Elimina respuestas citadas y contenido irrelevante
+    
+    Returns:
+        HTML con contexto (período + tabla), o string vacío si no se encuentra
+    """
+    import re
+    
+    # 1. Buscar tabla con id="taula_dades"
+    # Patrón: <table id="taula_dades"...>...</table>
+    table_match = re.search(
+        r'<table[^>]*id=["\']taula_dades["\'][^>]*>.*?</table>',
+        html,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    
+    if table_match:
+        table_start = table_match.start()
+        table_end = table_match.end()
+        
+        # Buscar texto de período ANTES de la tabla (últimos 2000 caracteres previos)
+        context_start = max(0, table_start - 2000)
+        context_html = html[context_start:table_end]
+        
+        logger.info("✅ Tabla 'taula_dades' + contexto extraídos del HTML (%d caracteres)", len(context_html))
+        return context_html
+    
+    # 2. Si no se encuentra la tabla específica, buscar la primera tabla general
+    logger.warning("⚠️  No se encontró tabla con id='taula_dades', buscando primera tabla genérica")
+    table_match = re.search(r'<table[^>]*>.*?</table>', html, flags=re.DOTALL | re.IGNORECASE)
+    
+    if table_match:
+        table_start = table_match.start()
+        table_end = table_match.end()
+        
+        # Incluir contexto previo
+        context_start = max(0, table_start - 2000)
+        context_html = html[context_start:table_end]
+        
+        logger.info("✅ Primera tabla HTML + contexto extraídos (%d caracteres)", len(context_html))
+        return context_html
+    
+    logger.warning("⚠️  No se encontró ninguna tabla HTML en el mensaje")
+    return ""
+
+
 def _extract_plain_body(msg: Message) -> str:
     """
-    Extrae el cuerpo en texto plano de un mensaje (soporta multipart).
-    Si no hay text/plain, intenta extraer de text/html.
+    Extrae el cuerpo del mensaje:
+    - Si es HTML: extrae la tabla con id="taula_dades" (formato HTML completo)
+    - Si es texto plano: extrae y limpia el texto
+    
+    IMPORTANTE: Ahora devuelve HTML de tabla si está disponible (no texto plano),
+    para que el LLM pueda extraer el formato CLxxxxx-idtag de la primera celda.
     """
     plain_text = None
     html_text = None
@@ -101,20 +158,30 @@ def _extract_plain_body(msg: Message) -> str:
             elif content_type == "text/html":
                 html_text = decoded
     
-    # Devolver texto plano si existe, sino extraer de HTML
-    if plain_text:
-        return _clean_body(_remove_email_thread(plain_text))
-    elif html_text:
-        # IMPORTANTE: Eliminar filas no insertables ANTES de procesar el HTML
+    # PRIORIDAD 1: Si hay HTML, extraer tabla con id="taula_dades"
+    if html_text:
+        # Eliminar filas no insertables ANTES de extraer la tabla
         html_text = _remove_non_insertable_rows(html_text)
         
-        # Extraer texto básico de HTML (eliminar tags)
+        # Intentar extraer tabla específica
+        table_html = _extract_table_from_html(html_text)
+        
+        if table_html:
+            # ✨ NUEVO: Devolver HTML de tabla directamente (no convertir a texto)
+            # El LLM procesará el HTML y extraerá el formato CLxxxxx-idtag
+            return table_html
+        
+        # Si no hay tabla, convertir HTML a texto plano (fallback)
         import re
         text = re.sub(r'<style[^>]*>.*?</style>', '', html_text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<[^>]+>', ' ', text)  # Eliminar todos los tags
         text = re.sub(r'\s+', ' ', text)  # Colapsar espacios
         return _clean_body(_remove_email_thread(text.strip()))
+    
+    # PRIORIDAD 2: Si hay texto plano, usarlo
+    if plain_text:
+        return _clean_body(_remove_email_thread(plain_text))
     
     return ""
 
@@ -403,7 +470,7 @@ class EmailReader:
     def fetch_new_messages(self) -> Generator[tuple[str, dict], None, None]:
         """
         Genera tuplas (uid, message_data) para cada mensaje UNSEEN de la carpeta
-        configurada. Los mensajes se marcan como leídos (\Seen) al ser descargados.
+        configurada. Los mensajes se marcan como leídos (\\Seen) al ser descargados.
 
         Yields:
             uid:          Identificador numérico del mensaje en el servidor.

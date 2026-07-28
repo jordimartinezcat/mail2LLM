@@ -36,6 +36,8 @@ def save_pending(uid: str, msg_data: dict, consumptions: list[Any]) -> None:
                 "empresa": c.empresa,
                 "valor": c.valor,
                 "unidades": c.unidades,
+                "id_bcentral": getattr(c, "id_bcentral", None),
+                "idtag": getattr(c, "idtag", None),  # ✨ NUEVO: Guardar idtag si está presente
             }
             for c in consumptions
         ],
@@ -56,9 +58,80 @@ def get_pending(uid: str) -> dict | None:
     return pending.get(uid)
 
 
+def get_pending_consumptions(uid: str, line_numbers: list[int] | None = None) -> list[dict] | None:
+    """
+    Obtiene consumos pendientes SIN eliminarlos del archivo.
+    Útil para verificar datos antes de confirmar inserción en BD.
+    
+    Args:
+        uid: UID del mensaje original
+        line_numbers: Números de línea específicos (1-indexed), o None para todos
+    
+    Returns:
+        Lista de consumptions dict, o None si el UID no existe
+    """
+    pending = _load_pending_data()
+    
+    if uid not in pending:
+        return None
+    
+    all_consumptions = pending[uid]["consumptions"]
+    
+    # Si no hay números especificados, devolver TODOS
+    if line_numbers is None:
+        return all_consumptions
+    
+    # Filtrar solo los números de línea solicitados (1-indexed)
+    return [c for i, c in enumerate(all_consumptions, 1) if i in line_numbers]
+
+
+def remove_pending(uid: str, line_numbers: list[int] | None = None) -> bool:
+    """
+    Elimina consumos pendientes del archivo (después de inserción exitosa en BD).
+    
+    Args:
+        uid: UID del mensaje original
+        line_numbers: Números de línea a eliminar (1-indexed), o None para eliminar todos
+    
+    Returns:
+        True si se eliminó algo, False si el UID no existía
+    """
+    pending = _load_pending_data()
+    
+    if uid not in pending:
+        return False
+    
+    # Eliminar todos los consumos del UID
+    if line_numbers is None:
+        pending.pop(uid)
+        _save_pending_data(pending)
+        logger.info("UID [%s] eliminado completamente de pendientes", uid)
+        return True
+    
+    # Eliminación selectiva
+    data = pending[uid]
+    all_consumptions = data["consumptions"]
+    remaining = [c for i, c in enumerate(all_consumptions, 1) if i not in line_numbers]
+    
+    if remaining:
+        data["consumptions"] = remaining
+        pending[uid] = data
+        logger.info("UID [%s]: eliminados %d consumos, quedan %d pendientes", 
+                    uid, len(line_numbers), len(remaining))
+    else:
+        pending.pop(uid)
+        logger.info("UID [%s] eliminado completamente (últimos %d consumos)", 
+                    uid, len(line_numbers))
+    
+    _save_pending_data(pending)
+    return True
+
+
 def confirm_and_remove(uid: str) -> list[dict] | None:
     """
     Marca tots els consums com a confirmats i els elimina de pendents.
+    
+    DEPRECADO: Usar get_pending_consumptions() + remove_pending() para transaccionalidad.
     
     Returns:
         Llista de consumptions dict, o None si el UID no existeix

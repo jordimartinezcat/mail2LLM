@@ -31,58 +31,58 @@ def _compute_ref(email_date_str: str) -> tuple[str, int]:
             return f"{today.year}-{today.month - 1:02d}-01", today.year
 
 _PROMPT_TEMPLATE = """\
-Extract ALL water consumption records from the following email and its attachments. The email may be written in Spanish or Catalan.
-An email may contain one or more consumption records from different companies.
-The data may appear in the email body or in attached PDF files.
+CRITICAL: Extract EXACTLY the values from the HTML table. Do NOT invent or modify any data.
 
-**Email Context:**
-- From: {sender}
-- Subject: {subject}
+**TASK:**
+Read the HTML content below and extract ALL data rows from the table (skip header row).
 
-**IMPORTANT - Email Format Recognition:**
-This email is typically a REPLY (RE:) to a monthly consumption request. The actual consumption data appears in the QUOTED/CITED part of the email (after "De:", "Enviado el:", "From:", etc.).
+**STEP 1 - EXTRACT PERIOD/DATE:**
+Look for period indicator in the HTML:
+- Search for: "Període:", "Periodo:", "Període de facturació:", or similar
+- Extract month name and year (e.g., "Juliol 2026", "Gener 2025")
+- Convert to YYYY-MM-01 format using this mapping:
+  * Gener/Enero/January → 01
+  * Febrer/Febrero/February → 02
+  * Març/Marzo/March → 03
+  * Abril/April → 04
+  * Maig/Mayo/May → 05
+  * Juny/Junio/June → 06
+  * Juliol/Julio/July → 07
+  * Agost/Agosto/August → 08
+  * Setembre/Septiembre/September → 09
+  * Octubre/October → 10
+  * Novembre/Noviembre/November → 11
+  * Desembre/Diciembre/December → 12
+- If NO period found in text → return null for fecha
 
-Look for a TABLE structure with these columns (in Spanish or Catalan):
-- "Id" → company ID (CLxxxxx format) → extract as id_bcentral
-- "Nom d'empresa" or "Nombre empresa" → company name → extract as empresa
-- "Consum comptador" or "Consumo contador" → consumption value in m³ → extract as valor
+**STEP 2 - EXTRACT TABLE DATA:**
+HTML TABLE STRUCTURE:
+- Column 1: Client ID → format "CLxxxxx-idtag" OR "CLxxxxx" only
+- Column 2: Company name
+- Column 3: Consumption value (numeric)
 
-Example table format:
-```
-Id              Nom d'empresa                   Consum comptador
-CL00501         MESSER MORELL desde R.Materials  1093780
-CL00234         CARBUROS METALICOS SA            456789
-```
+**EXTRACTION RULES:**
+1. Column 1 (ID):
+   - If contains "-": Split → id_bcentral (before "-"), idtag (after "-")
+   - If NO "-": Only id_bcentral, idtag=null
+2. Column 2: Copy company name exactly as written
+3. Column 3: Extract numeric value only
+4. fecha: Use the date extracted in STEP 1 (same for all rows)
 
-**CRITICAL EXTRACTION RULES:**
-1. **IGNORE email signatures/footers**: "Consorci d'Aigües de Tarragona", contact blocks, disclaimers, legal text
-2. **DO NOT extract** "Consorci d'Aigües de Tarragona" or "CAT" as empresa - they are the email sender organization
-3. **Look in the QUOTED part** of reply emails (after "De:", "Enviado el:", "From:")
-4. **Table data is what matters** - ignore all surrounding text
-5. If the subject contains "Període:" or period mention (e.g., "Maig 2026"), use the last day of that month as fecha
+**RETURN JSON ARRAY:**
+[
+  {{"id_bcentral": "CLxxxxx", "idtag": 12345, "empresa": "Company Name", "valor": 999, "unidades": "m3", "fecha": "2026-07-01"}}
+]
 
-**IMPORTANT - Known Companies:**
-The following companies are registered in the system. When extracting company names from the email, try to match them with these registered names or their common abbreviations:
-{companies_list}
-
-Return ONLY a valid JSON array where each element has exactly these fields:
-- "fecha": consumption date in ISO 8601 format (YYYY-MM-DD).
-  Rules:
-  * If a PERIOD is mentioned (e.g., "Període: Maig 2026", "Periodo: Mayo 2026"): use the LAST DAY of that month (2026-05-31).
-  * If a full date is explicitly stated in the body: convert it to ISO 8601 and use it.
-  * If only a month name is found but NO year: use that month with year {ref_year}. Use the last day of that month.
-  * If NO date at all is found: use null.
-- "empresa": company name from the "Nom d'empresa" column. Extract the FULL name as it appears. If not found, use null.
-- "id_bcentral": company ID from the "Id" column (format: CLxxxxx, like CL00501, CL00234). **This is PRIORITY - if present, it uniquely identifies the company**. If not found, use null.
-- "valor": decimal number from "Consum comptador" column in cubic meters. If the value is a large integer (e.g., 1093780), keep it as is - do NOT divide or modify it. If not found, use null.
-- "unidades": always "m3".
-
-If there is only one record, return a single-element array.
-If no consumption data is found, return an empty array [].
-Do NOT add any explanation or markdown. Output only the JSON array. /no_think
-
-Email:
+**HTML TO PROCESS:**
 {body}
+
+**CRITICAL:** Extract from the HTML above, NOT from examples. Return [] if no data rows exist.
+
+Return ONLY the JSON array, no explanation. If no valid data rows found, return [].
+
+HTML Table:
+{{body}}
 """
 
 
@@ -92,7 +92,8 @@ class Consumption:
     empresa: str | None
     valor: float | None
     unidades: str = "m3"
-    id_bcentral: str | None = None  # ID de la empresa (ej: CL00091) si está presente en el email
+    id_bcentral: str | None = None  # ID de la empresa (ej: CL00091), extraído del formato "CLxxxxx-idtag"
+    idtag: int | None = None  # ✨ idTag de la señal, extraído del formato "CLxxxxx-idtag" (inserción directa en BD)
     fecha_inferida: bool = False  # True si la fecha s'ha inferit del correu (no estava al cos)
 
     def to_dict(self) -> dict:
@@ -102,6 +103,7 @@ class Consumption:
             "valor": self.valor,
             "unidades": self.unidades,
             "id_bcentral": self.id_bcentral,
+            "idtag": self.idtag,
         }
 
 
@@ -136,6 +138,15 @@ def extract_consumption(
     if pdf_contents:
         combined_content += "\n\n" + "\n\n═══════════════════════════════════\n\n".join(pdf_contents)
     
+    # 🔍 DEBUG: Log del HTML COMPLETO enviado al LLM
+    logger.info("="*80)
+    logger.info("🔍 HTML COMPLETO ENVIADO AL LLM:")
+    logger.info("="*80)
+    logger.info("%s", combined_content)
+    logger.info("="*80)
+    logger.info("🔍 FIN HTML - Longitud total: %d caracteres", len(combined_content))
+    logger.info("="*80)
+    
     # Formatear lista de empresas para el prompt (limitar a primeras 50 para no saturar)
     companies_text = "No company list provided."
     if companies:
@@ -145,14 +156,7 @@ def extract_consumption(
             companies_lines.append(f"... and {len(companies) - 50} more companies")
         companies_text = "\n".join(companies_lines)
     
-    prompt = _PROMPT_TEMPLATE.format(
-        sender=sender or "Unknown",
-        subject=subject or "No subject",
-        body=combined_content, 
-        ref_date=ref_date, 
-        ref_year=ref_year,
-        companies_list=companies_text
-    )
+    prompt = _PROMPT_TEMPLATE.format(body=combined_content)
     
     # Log: verificar contexto enviado al LLM
     logger.info("  Contexto enviado al LLM → From: %s | Subject: %s", 
@@ -166,6 +170,7 @@ def extract_consumption(
                 "fecha":       {"type": ["string", "null"], "description": "ISO 8601 date (YYYY-MM-DD) or null"},
                 "empresa":     {"type": ["string", "null"], "description": "Company name or identifier"},
                 "id_bcentral": {"type": ["string", "null"], "description": "Company ID (CLxxxxx format) or null"},
+                "idtag":       {"type": ["integer", "null"], "description": "Signal idTag from HTML id or title attribute"},
                 "valor":       {"type": ["number", "null"], "description": "Consumption in cubic meters"},
                 "unidades":    {"type": "string", "enum": ["m3"]},
             },
@@ -331,4 +336,5 @@ def _build_consumption(data: dict) -> "Consumption":
         valor=valor,
         unidades=data.get("unidades", "m3"),
         id_bcentral=data.get("id_bcentral"),
+        idtag=data.get("idtag"),
     )

@@ -108,6 +108,7 @@ def _normalize_company_names(
                 unidades=c.unidades,
                 fecha_inferida=getattr(c, "fecha_inferida", False),
                 id_bcentral=c.id_bcentral,  # Preservar id_bcentral
+                idtag=getattr(c, "idtag", None),  # ✨ NUEVO: Preservar idtag si existe
             )
         )
     
@@ -318,9 +319,10 @@ def main() -> None:
                         else:
                             logger.warning("No s'ha detectat confirmació selectiva ni total clara - assumint TOTAL per defecte")
                     
-                    # Recuperar consums pendents (totals o selectius)
-                    from pending_confirmations import confirm_and_remove_selective
-                    consumptions_data = confirm_and_remove_selective(original_uid, line_numbers)
+                    # PASO 1: Recuperar consums pendents SIN eliminar (transaccionalidad)
+                    from pending_confirmations import get_pending_consumptions, remove_pending
+                    
+                    consumptions_data = get_pending_consumptions(original_uid, line_numbers)
                     
                     if not consumptions_data:
                         logger.warning(
@@ -348,29 +350,48 @@ def main() -> None:
                             empresa=c["empresa"],
                             valor=c["valor"],
                             unidades=c["unidades"],
+                            id_bcentral=c.get("id_bcentral"),  # ✨ NUEVO: Preservar id_bcentral
+                            idtag=c.get("idtag"),  # ✨ NUEVO: Preservar idtag si existe
                         )
                         for c in consumptions_data
                     ]
                     
+                    # ── Filtrar consumos: solo insertar los que tienen idtag ──────────────
+                    # Los consumos sin idtag (CLxxxxx sin "-idtag") son señales que NO deben insertarse
+                    consumptions_to_insert = [c for c in consumptions if c.idtag is not None]
+                    consumptions_skipped = [c for c in consumptions if c.idtag is None]
+                    
+                    if consumptions_skipped:
+                        logger.info(
+                            "⚠️  %d consumo(s) sin idTag omitidos (señales que NO deben insertarse en BD): %s",
+                            len(consumptions_skipped),
+                            ", ".join([c.empresa for c in consumptions_skipped])
+                        )
+                    
                     logger.info(
-                        "Confirmación [%s] → Insertando %d consumo(s) del mensaje original [%s]",
+                        "Confirmación [%s] → Insertando %d consumo(s) del mensaje original [%s] (%d omitidos sin idTag)",
                         uid,
-                        len(consumptions),
+                        len(consumptions_to_insert),
                         original_uid,
+                        len(consumptions_skipped),
                     )
                     
-                    # Insertar en BD
+                    # PASO 2: Insertar en BD (puede fallar - NO eliminamos de pendientes aún)
                     db_not_found: list[str] = []
-                    if config.db.enabled:
+                    if config.db.enabled and consumptions_to_insert:
                         try:
                             _, db_not_found = save_consumptions(
-                                consumptions, config.db, consorciat_cache
+                                consumptions_to_insert, config.db, consorciat_cache
                             )
                         except Exception as db_exc:  # noqa: BLE001
                             logger.error(
                                 "Error al guardar en BD los consumos confirmados [%s]: %s",
                                 uid,
                                 db_exc,
+                            )
+                            logger.warning(
+                                "UID [%s] mantenido en pendientes para reintentar después de solucionar el error",
+                                original_uid,
                             )
                             failed_messages.append({
                                 "uid": uid,
@@ -392,6 +413,10 @@ def main() -> None:
                             len(db_not_found),
                             ", ".join(db_not_found),
                         )
+                        logger.warning(
+                            "UID [%s] mantenido en pendientes para reintentar después de corregir empresas",
+                            original_uid,
+                        )
                         failed_messages.append({
                             "uid": uid,
                             "subject": msg["subject"],
@@ -405,15 +430,32 @@ def main() -> None:
                         errors += 1
                         continue
                     
+                    # PASO 3: SOLO si inserción exitosa, eliminar de pendientes
+                    remove_pending(original_uid, line_numbers)
+                    
+                    if consumptions_skipped and not consumptions_to_insert:
+                        logger.info(
+                            "✓ UID [%s]: TODOS los consumos omitidos (sin idTag - señales que NO se insertan)",
+                            original_uid
+                        )
+                    elif consumptions_skipped:
+                        logger.info(
+                            "✓ UID [%s]: %d consumo(s) insertados en BD, %d omitidos (sin idTag)",
+                            original_uid,
+                            len(consumptions_to_insert),
+                            len(consumptions_skipped)
+                        )
+                    else:
+                        logger.info(
+                            "✓ UID [%s]: %d consumo(s) confirmados e insertados correctamente en BD",
+                            original_uid,
+                            len(consumptions_to_insert)
+                        )
+                    
                     # Mover confirmación a carpeta de confirmaciones OK
                     reader.move_message(uid, config.email.folder_confirmed)
                     results.extend(consumptions)
                     processed += 1
-                    
-                    logger.info(
-                        "✓ Consumos confirmados e insertados en BD (mensaje original [%s])",
-                        original_uid,
-                    )
                     continue
 
                 # ═══════════════════════════════════════════════════════════════
@@ -499,12 +541,30 @@ def main() -> None:
                     consumptions = filtered
 
                 # Normalizar nombres de empresa con la BD (reemplazar por nombre oficial + ID)
-                if config.db.enabled and consorciat_cache:
-                    consumptions, empresas_no_encontradas = _normalize_company_names(
-                        consumptions,
+                # ✨ NUEVO: Solo normalizar si NO vienen idtag (emails sin formato CLxxxxx-idtag)
+                # Si vienen idtag, la inserción será directa sin búsquedas
+                consumptions_with_idtag = [c for c in consumptions if hasattr(c, 'idtag') and c.idtag is not None]
+                consumptions_without_idtag = [c for c in consumptions if not (hasattr(c, 'idtag') and c.idtag is not None)]
+                
+                if consumptions_with_idtag:
+                    logger.info(
+                        "✅ %d consumo(s) con idTag directo (formato CLxxxxx-idtag) — inserción directa sin búsquedas",
+                        len(consumptions_with_idtag)
+                    )
+                
+                empresas_no_encontradas = []
+                if consumptions_without_idtag and config.db.enabled and consorciat_cache:
+                    logger.info(
+                        "⚠️  %d consumo(s) sin idTag — normalizando empresas con BD",
+                        len(consumptions_without_idtag)
+                    )
+                    normalized, empresas_no_encontradas = _normalize_company_names(
+                        consumptions_without_idtag,
                         consorciat_cache,
                         config.db.match_threshold
                     )
+                    # Combinar: consumos con idtag + consumos normalizados
+                    consumptions = consumptions_with_idtag + normalized
                     
                     if empresas_no_encontradas:
                         logger.warning(
@@ -614,7 +674,7 @@ def main() -> None:
             )
 
     except Exception as exc:  # noqa: BLE001
-        logger.error("Error inesperado durante la lectura de correos: %s", exc)
+        logger.error("Error inesperado durante la lectura de correos: %s", exc, exc_info=True)
         sys.exit(1)
 
     logger.info("processMail finalizado")

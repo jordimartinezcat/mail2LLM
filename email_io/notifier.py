@@ -221,16 +221,70 @@ def send_confirmation_request(
         logger.warning("No es pot enviar confirmació: sense destinataris configurats")
         return
     
+    # ── Obtenir noms dels tags des de la BD ────────────────────────────────────
+    tag_names = {}
+    idtags_to_fetch = [c.idtag for c in consumptions if hasattr(c, 'idtag') and c.idtag]
+    
+    if idtags_to_fetch and config.db.enabled:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(
+                host=config.db.host,
+                port=config.db.port,
+                dbname=config.db.database,
+                user=config.db.username,
+                password=config.db.password,
+                connect_timeout=10,
+                options=f"-c client_encoding={config.db.client_encoding}",
+            )
+            with conn:
+                with conn.cursor() as cur:
+                    placeholders = ','.join(['%s'] * len(idtags_to_fetch))
+                    query = f'SELECT "idTag", tag FROM ga_landing.ite_consums_tags WHERE "idTag" IN ({placeholders})'
+                    cur.execute(query, idtags_to_fetch)
+                    for row in cur.fetchall():
+                        tag_names[row[0]] = row[1]
+            logger.debug("Noms de tags obtinguts: %d", len(tag_names))
+        except Exception as e:
+            logger.warning("No s'han pogut obtenir els noms dels tags: %s", e)
+    
     # ── Construir taula HTML de consums ────────────────────────────────────────
     consumptions_rows = ""
     for i, c in enumerate(consumptions, 1):
+        # Mostrar idtag con nombre si está disponible
+        if hasattr(c, 'idtag') and c.idtag:
+            tag_name = tag_names.get(c.idtag, "")
+            if tag_name:
+                idtag_display = f"<strong>{c.idtag}</strong><br/><span style='color: #666; font-size: 11px;'>{tag_name}</span>"
+            else:
+                idtag_display = f"<strong>{c.idtag}</strong>"
+        else:
+            idtag_display = "<em style='color: #999;'>Sin idTag</em>"
+        
         consumptions_rows += f"""
         <tr>
             <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{i}</td>
+            <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">{idtag_display}</td>
             <td style="padding: 8px; border: 1px solid #ddd;">{c.fecha}</td>
             <td style="padding: 8px; border: 1px solid #ddd;">{c.empresa}</td>
             <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">{c.valor} {c.unidades}</td>
         </tr>"""
+    
+    # ── Contar consumos con y sin idTag ────────────────────────────────────────
+    consumptions_with_idtag = sum(1 for c in consumptions if hasattr(c, 'idtag') and c.idtag)
+    consumptions_without_idtag = len(consumptions) - consumptions_with_idtag
+    
+    # ── Advertencia si hay consumos sin idTag ──────────────────────────────────
+    warning_html = ""
+    if consumptions_without_idtag > 0:
+        warning_html = f"""
+        <div style="background: #fff3cd; padding: 15px; margin: 15px 0; border-left: 4px solid #ffc107; border-radius: 5px;">
+            <p style="margin: 0; color: #856404;">
+                <strong>⚠️ Atenció:</strong> {consumptions_without_idtag} consum(s) <strong>sense idTag</strong> seran <strong>OMESOS</strong> 
+                de la inserció a la base de dades (senyals que NO s'han d'inserir).
+            </p>
+        </div>
+        """
     
     # ── Cos HTML del correu ───────────────────────────────────────────────────
     body_html = f"""
@@ -269,6 +323,7 @@ def send_confirmation_request(
             <thead>
                 <tr>
                     <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">#</th>
+                    <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">idTag</th>
                     <th style="padding: 10px; border: 1px solid #ddd;">Data</th>
                     <th style="padding: 10px; border: 1px solid #ddd;">Empresa</th>
                     <th style="padding: 10px; border: 1px solid #ddd;">Consum</th>
@@ -278,6 +333,8 @@ def send_confirmation_request(
                 {consumptions_rows}
             </tbody>
         </table>
+        
+        {warning_html}
         
         <div class="actions">
             <h3>⚠️ Acció Requerida</h3>

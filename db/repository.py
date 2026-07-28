@@ -187,10 +187,18 @@ def save_consumptions(
     cache: list[tuple[str, str]],
 ) -> tuple[int, list[str]]:
     """
-    Insereix una llista de Consumption a ga_datalake.ite_consums_datarect_test.
-    - Cerca id_consorciat per similitud de text usant el cache en memòria.
-    - Busca idTag a través de ite_comptadors i ite_consums_tags.
-    - Retorna (nombre de files inserides, llista d'empreses no identificades).
+    Insereix una llista de Consumption a ga_datalake.ite_consums_datarect.
+    
+    PRIORIDAD 1 (✨ NUEVO):
+    - Si el consumo tiene 'idtag' (extraído del atributo data-tag del HTML):
+      → Inserción DIRECTA sin búsquedas (más rápido y preciso)
+    
+    PRIORIDAD 2 (Fallback para emails antiguos):
+    - Si no tiene 'idtag': Busca por id_bcentral o fuzzy matching
+    - Cerca id_consorciat per similitud de text usant el cache en memòria
+    - Busca idTag a través de ite_comptadors i ite_consums_tags
+    
+    Retorna (nombre de files inserides, llista d'empreses no identificades).
     """
     inserted = 0
     not_found: list[str] = []
@@ -198,10 +206,47 @@ def save_consumptions(
     with _connect(config) as conn:
         with conn.cursor() as cur:
             for c in consumptions:
-                id_consorciat = None
+                idtag = None
                 nom_empresa = c.empresa or "?"
+                id_consorciat = None
                 
-                # PRIORIDAD 1: Usar id_bcentral si viene en el consumo extraído por el LLM
+                # ✨ PRIORIDAD 1: Usar idtag directamente si viene en el consumo (del atributo data-tag)
+                if hasattr(c, 'idtag') and c.idtag is not None:
+                    idtag = c.idtag
+                    logger.info(
+                        "  ✅ idTag directo desde HTML (data-tag): %s | Empresa: '%s' | Fecha: %s | Valor: %.2f %s",
+                        idtag, nom_empresa, c.fecha, c.valor, c.unidades
+                    )
+                    # Inserción directa sin búsquedas
+                    descrip = _COMENTARI_SENSE_DATA if getattr(c, "fecha_inferida", False) else _COMENTARI
+                    try:
+                        cur.execute(_INSERT, {
+                            "data":    c.fecha,
+                            "idtag":   idtag,
+                            "valor":   float(c.valor),
+                            "tipus":   _TIPUS_CORREO,
+                            "descrip": descrip,
+                        })
+                        inserted += 1
+                        logger.info("  ✅ Consumo insertado exitosamente (idTag=%s)", idtag)
+                    except Exception as e:
+                        logger.error(
+                            "  ❌ Error insertando consumo con idTag=%s: %s",
+                            idtag, str(e)
+                        )
+                        not_found.append(f"{nom_empresa} (idTag={idtag})")
+                    continue  # Siguiente consumo
+                
+                # ══════════════════════════════════════════════════════════════
+                # PRIORIDAD 2 (Fallback): Búsqueda tradicional para emails sin formato CLxxxxx-idtag
+                # ══════════════════════════════════════════════════════════════
+                
+                logger.info(
+                    "  ⚠️  idTag no proporcionado en HTML — usando búsqueda tradicional para: '%s'",
+                    nom_empresa
+                )
+                
+                # PRIORIDAD 2.1: Usar id_bcentral si viene en el consumo extraído por el LLM
                 if c.id_bcentral:
                     id_bcentral_str = c.id_bcentral.strip().upper()
                     logger.info(
@@ -216,19 +261,10 @@ def save_consumptions(
                         nom_empresa = row[0]  # Usar el nombre oficial de la BD
                         logger.info("  ✅ id_bcentral '%s' verificat a bcfact_clients → Empresa: '%s'", id_bcentral_str, nom_empresa)
                         
-                        # 2) Buscar el Id (integer) en ite_consorciat
-                        query_id = f"SELECT id FROM {_TABLE_CONSORCIATS} WHERE id_bcentral = %s LIMIT 1"
-                        cur.execute(query_id, (id_bcentral_str,))
-                        row_id = cur.fetchone()
-                        if row_id:
-                            id_consorciat = row_id[0]  # Este es el Id numérico (ej: 157)
-                            logger.info("  ✅ Id obtingut d'ite_consorciat: %s", id_consorciat)
-                        else:
-                            logger.warning(
-                                "  ⚠️  id_bcentral '%s' trobat a bcfact_clients però NO a ite_consorciat — fallback a fuzzy",
-                                id_bcentral_str
-                            )
-                            id_consorciat = None
+                        # ✅ FIX: Guardar el id_bcentral STRING, NO el Id numérico
+                        # La función _get_idtag_from_consorciat() espera id_bcentral (STRING), no Id (INTEGER)
+                        id_consorciat = id_bcentral_str  # Ejemplo: "CL00107"
+                        logger.info("  ✅ id_bcentral establecido: %s", id_consorciat)
                     else:
                         logger.warning(
                             "  ⚠️  id_bcentral '%s' NO trobat a bcfact_clients — intentant fuzzy matching amb nom: '%s'",
@@ -236,7 +272,7 @@ def save_consumptions(
                         )
                         id_consorciat = None  # Forzar fallback
                 
-                # PRIORIDAD 2: Extraer ID del formato "NOMBRE (CL00123)" en el nombre de empresa
+                # PRIORIDAD 2.2: Extraer ID del formato "NOMBRE (CL00123)" en el nombre de empresa
                 if not id_consorciat and c.empresa:
                     import re
                     id_match = re.search(r'\(([^)]+)\)$', c.empresa)
@@ -248,7 +284,7 @@ def save_consumptions(
                             nom_empresa, id_consorciat
                         )
                 
-                # PRIORIDAD 3 (Fallback): Fuzzy matching por nombre
+                # PRIORIDAD 2.3 (Fallback): Fuzzy matching por nombre
                 if not id_consorciat and c.empresa:
                     logger.info(
                         "  Intentant fuzzy matching per nom: '%s' (threshold=%.2f)",
