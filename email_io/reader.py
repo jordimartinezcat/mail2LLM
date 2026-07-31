@@ -94,8 +94,35 @@ def _extract_table_from_html(html: str) -> str:
         logger.info("✅ Tabla 'taula_dades' + contexto extraídos del HTML (%d caracteres)", len(context_html))
         return context_html
     
-    # 2. Si no se encuentra la tabla específica, buscar la primera tabla general
-    logger.warning("⚠️  No se encontró tabla con id='taula_dades', buscando primera tabla genérica")
+    # 2. Si no se encuentra la tabla específica, buscar tabla con columnas de datos
+    # La tabla de datos contiene: "Id", "Nom d'empresa", "Consum"
+    logger.warning("⚠️  No se encontró tabla con id='taula_dades', buscando tabla con columnas de datos")
+    
+    # Buscar TODAS las tablas
+    all_tables = re.findall(r'<table[^>]*>.*?</table>', html, flags=re.DOTALL | re.IGNORECASE)
+    
+    for table_html in all_tables:
+        # Verificar si la tabla contiene las columnas esperadas
+        has_id_col = re.search(r'<th[^>]*>\s*Id\s*</th>', table_html, re.IGNORECASE)
+        has_empresa_col = re.search(r'<th[^>]*>\s*Nom\s+d[\'"]?empresa', table_html, re.IGNORECASE)
+        has_consum_col = re.search(r'<th[^>]*>\s*Consum', table_html, re.IGNORECASE)
+        
+        # También buscar patrón CLxxxxx que indica datos reales
+        has_cl_pattern = re.search(r'CL\d{5}', table_html, re.IGNORECASE)
+        
+        if (has_id_col or has_empresa_col or has_consum_col) or has_cl_pattern:
+            # Esta es la tabla de datos
+            table_match = re.search(re.escape(table_html), html)
+            if table_match:
+                table_start = table_match.start()
+                table_end = table_match.end()
+                context_start = max(0, table_start - 2000)
+                context_html = html[context_start:table_end]
+                logger.info("✅ Tabla con datos de consumo encontrada (%d caracteres)", len(context_html))
+                return context_html
+    
+    # 3. Fallback: primera tabla general (puede ser firma u otra)
+    logger.warning("⚠️  No se encontró tabla con datos, usando primera tabla genérica")
     table_match = re.search(r'<table[^>]*>.*?</table>', html, flags=re.DOTALL | re.IGNORECASE)
     
     if table_match:
@@ -139,12 +166,15 @@ def _extract_plain_body(msg: Message) -> str:
             
             decoded = payload.decode(charset, errors="replace")
             
-            # Preferir text/plain
-            if content_type == "text/plain":
+            # Recopilar TODAS las partes (no hacer break)
+            if content_type == "text/plain" and not plain_text:
                 plain_text = decoded
-                break  # Ya tenemos lo que queremos
-            elif content_type == "text/html" and not html_text:
-                html_text = decoded
+            elif content_type == "text/html":
+                # Concatenar TODO el HTML (incluye partes citadas)
+                if html_text:
+                    html_text += "\n" + decoded
+                else:
+                    html_text = decoded
     else:
         # Mensaje simple (no multipart)
         content_type = msg.get_content_type()
