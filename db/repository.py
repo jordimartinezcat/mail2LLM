@@ -14,6 +14,7 @@ _TABLE_CONSORCIAT = "ga_landing.ite_bcfact_clients"
 _TABLE_CONSORCIATS = "ga_landing.ite_consorciat"  # Relación id_bcentral → Id (sin 's')
 _TABLE_COMPTADORS = "ga_landing.ite_comptadors"
 _TABLE_TAGS       = "ga_landing.ite_consums_tags"
+_TABLE_CONSUMS_DIA = "ga_landing.consums_dia"  # Tabla de consumos diarios
 _COMENTARI = "Consum introduit des de correu electrònic"
 _COMENTARI_SENSE_DATA = "Consum introduit des de correu electrònic. Data no indicada"
 _TIPUS_CORREO = 3  # Tipo 3 = introducción desde correo
@@ -21,6 +22,11 @@ _TIPUS_CORREO = 3  # Tipo 3 = introducción desde correo
 _INSERT = f"""
 INSERT INTO {_TABLE_CONSUMS} (data, idtag, valor, tipus, descrip)
 VALUES (%(data)s, %(idtag)s, %(valor)s, %(tipus)s, %(descrip)s)
+"""
+
+_INSERT_CONSUMS_DIA = f"""
+INSERT INTO {_TABLE_CONSUMS_DIA} ("Id", "Data", "Consum", especial)
+VALUES (%(id)s, %(data)s, %(consum)s, true)
 """
 
 
@@ -181,6 +187,63 @@ def _get_idtag_from_consorciat(id_consorciat: str, config: DBConfig) -> int | No
             return idtag
 
 
+def _get_contador_id_from_id_bcentral(id_bcentral: str, config: DBConfig) -> str | None:
+    """
+    Dado un id_bcentral (ej: CL00068), busca el Id del contador correspondiente para insertar en consums_dia.
+    
+    Flujo:
+    1. Busca en ite_consorciat el Id (IdGC) correspondiente al id_bcentral
+    2. Busca el contador en ite_comptadors donde IdGC coincida y Pare IS NOT NULL
+    3. Retorna el "Id" del contador (ej: 'INPA', 'BAS', etc.)
+    
+    Retorna None si no se encuentra.
+    """
+    with _connect(config) as conn:
+        with conn.cursor() as cur:
+            # 1. Buscar en ite_consorciat para obtener el Id (IdGC)
+            query_consorciat = f"""
+                SELECT id
+                FROM {_TABLE_CONSORCIATS}
+                WHERE id_bcentral = %s
+                LIMIT 1
+            """
+            cur.execute(query_consorciat, (id_bcentral,))
+            row = cur.fetchone()
+            
+            if not row:
+                logger.warning(
+                    "No se encontró IdGC en ite_consorciat para id_bcentral='%s'",
+                    id_bcentral
+                )
+                return None
+            
+            idgc = row[0]
+            logger.debug("id_bcentral '%s' → IdGC=%s", id_bcentral, idgc)
+            
+            # 2. Buscar contador en ite_comptadors
+            query_comptador = f"""
+                SELECT "Id"
+                FROM {_TABLE_COMPTADORS}
+                WHERE "IdGC" = %s
+                LIMIT 1
+            """
+            cur.execute(query_comptador, (idgc,))
+            row = cur.fetchone()
+            
+            if not row:
+                logger.warning(
+                    "No se encontró contador en ite_comptadors para IdGC=%s (id_bcentral '%s')",
+                    idgc, id_bcentral
+                )
+                return None
+            
+            contador_id = row[0]
+            logger.debug("Contador encontrado: Id='%s' para IdGC=%s", contador_id, idgc)
+            return contador_id
+    
+    return None
+
+
 def save_consumptions(
     consumptions: list,
     config: DBConfig,
@@ -229,6 +292,33 @@ def save_consumptions(
                         })
                         inserted += 1
                         logger.info("  ✅ Consumo insertado exitosamente (idTag=%s)", idtag)
+                        
+                        # ══════════════════════════════════════════════════════════════
+                        # INSERCIÓN ADICIONAL en ga_landing.consums_dia
+                        # ══════════════════════════════════════════════════════════════
+                        if hasattr(c, 'id_bcentral') and c.id_bcentral:
+                            contador_id = _get_contador_id_from_id_bcentral(c.id_bcentral, config)
+                            if contador_id:
+                                try:
+                                    cur.execute(_INSERT_CONSUMS_DIA, {
+                                        "id":     contador_id,
+                                        "data":   c.fecha,
+                                        "consum": int(c.valor),
+                                    })
+                                    logger.info("  ✅ Consumo insertado también en consums_dia (Id='%s')", contador_id)
+                                except Exception as e_dia:
+                                    logger.error(
+                                        "  ❌ Error insertando en consums_dia para Id='%s': %s",
+                                        contador_id, str(e_dia)
+                                    )
+                            else:
+                                logger.warning(
+                                    "  ⚠️  No se pudo obtener Id del contador para id_bcentral='%s' — sin inserción en consums_dia",
+                                    c.id_bcentral
+                                )
+                        else:
+                            logger.debug("  ℹ️  Sin id_bcentral — sin inserción en consums_dia")
+                        
                     except Exception as e:
                         logger.error(
                             "  ❌ Error insertando consumo con idTag=%s: %s",
@@ -341,6 +431,32 @@ def save_consumptions(
                     "descrip": descrip,
                 })
                 inserted += 1
+                
+                # ══════════════════════════════════════════════════════════════
+                # INSERCIÓN ADICIONAL en ga_landing.consums_dia
+                # ══════════════════════════════════════════════════════════════
+                if id_consorciat:  # Tenemos id_bcentral del fallback
+                    contador_id = _get_contador_id_from_id_bcentral(id_consorciat, config)
+                    if contador_id:
+                        try:
+                            cur.execute(_INSERT_CONSUMS_DIA, {
+                                "id":     contador_id,
+                                "data":   c.fecha,
+                                "consum": int(c.valor),
+                            })
+                            logger.info("  ✅ Consumo insertado también en consums_dia (Id='%s')", contador_id)
+                        except Exception as e_dia:
+                            logger.error(
+                                "  ❌ Error insertando en consums_dia para Id='%s': %s",
+                                contador_id, str(e_dia)
+                            )
+                    else:
+                        logger.warning(
+                            "  ⚠️  No se pudo obtener Id del contador para id_consorciat='%s' — sin inserción en consums_dia",
+                            id_consorciat
+                        )
+                else:
+                    logger.debug("  ℹ️  Sin id_consorciat — sin inserción en consums_dia")
 
         conn.commit()
 
