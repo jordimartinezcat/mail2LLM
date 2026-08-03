@@ -2,10 +2,12 @@ import difflib
 import logging
 import unicodedata
 from datetime import datetime
+import calendar
 
 import psycopg2
+import pyodbc
 
-from config.loader import DBConfig
+from config.loader import DBConfig, MSSQLConfig
 
 logger = logging.getLogger("processMail")
 
@@ -44,12 +46,47 @@ def _connect(config: DBConfig):
     )
 
 
+def _connect_mssql(config: MSSQLConfig):
+    """
+    Conecta a SQL Server usando pyodbc.
+    Soporta autenticación de Windows (Trusted_Connection) o usuario/contraseña.
+    """
+    if config.use_windows_auth:
+        # Autenticación de Windows
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={config.host},{config.port};"
+            f"DATABASE={config.database};"
+            f"Trusted_Connection=yes;"
+        )
+    else:
+        # Autenticación SQL Server
+        conn_str = (
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={config.host},{config.port};"
+            f"DATABASE={config.database};"
+            f"UID={config.username};"
+            f"PWD={config.password};"
+        )
+    
+    return pyodbc.connect(conn_str, timeout=10)
+
+
 def _normalize(text: str) -> str:
     """Minúscules, sense accents, sense espais redundants."""
     text = text.lower().strip()
     text = unicodedata.normalize("NFD", text)
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     return " ".join(text.split())
+
+
+def _get_last_day_of_month(date: datetime) -> datetime:
+    """
+    Retorna el último día del mes de la fecha dada.
+    Ejemplo: 2026-07-01 → 2026-07-31
+    """
+    last_day = calendar.monthrange(date.year, date.month)[1]
+    return datetime(date.year, date.month, last_day)
 
 
 def load_consorciat_cache(config: DBConfig) -> list[tuple[str, str]]:
@@ -244,10 +281,54 @@ def _get_contador_id_from_id_bcentral(id_bcentral: str, config: DBConfig) -> str
     return None
 
 
+def _insert_to_mssql_consums_dia(
+    contador_id: str,
+    fecha: datetime,
+    valor: float,
+    mssql_config: MSSQLConfig
+) -> bool:
+    """
+    Inserta un registro en la tabla MSSQL dbo.Consums_dia.
+    
+    Args:
+        contador_id: Id del contador (ej: 'SEC', 'CAR2')
+        fecha: Fecha del consumo
+        valor: Valor del consumo en m³
+        mssql_config: Configuración MSSQL
+    
+    Returns:
+        True si la inserción fue exitosa, False en caso contrario
+    """
+    if not mssql_config.enabled:
+        return False
+    
+    try:
+        with _connect_mssql(mssql_config) as conn:
+            with conn.cursor() as cur:
+                query = f"""
+                INSERT INTO {mssql_config.table} (Id, Data, Consum, especial)
+                VALUES (?, ?, ?, ?)
+                """
+                cur.execute(query, (contador_id, fecha, int(valor), True))
+                conn.commit()
+                logger.info(
+                    "  ✅ Consumo insertado en MSSQL %s (Id='%s')",
+                    mssql_config.table, contador_id
+                )
+                return True
+    except Exception as e:
+        logger.error(
+            "  ❌ Error insertando en MSSQL %s para Id='%s': %s",
+            mssql_config.table, contador_id, str(e)
+        )
+        return False
+
+
 def save_consumptions(
     consumptions: list,
     config: DBConfig,
     cache: list[tuple[str, str]],
+    mssql_config: MSSQLConfig | None = None,
 ) -> tuple[int, list[str]]:
     """
     Insereix una llista de Consumption a ga_datalake.ite_consums_datarect.
@@ -300,12 +381,20 @@ def save_consumptions(
                             contador_id = _get_contador_id_from_id_bcentral(c.id_bcentral, config)
                             if contador_id:
                                 try:
+                                    # Usar último día del mes para consums_dia
+                                    fecha_ultimo_dia = _get_last_day_of_month(c.fecha)
                                     cur.execute(_INSERT_CONSUMS_DIA, {
                                         "id":     contador_id,
-                                        "data":   c.fecha,
+                                        "data":   fecha_ultimo_dia,
                                         "consum": int(c.valor),
                                     })
-                                    logger.info("  ✅ Consumo insertado también en consums_dia (Id='%s')", contador_id)
+                                    logger.info("  ✅ Consumo insertado también en consums_dia (Id='%s', fecha=%s)", 
+                                               contador_id, fecha_ultimo_dia.strftime("%Y-%m-%d"))
+                                    
+                                    # Inserción en MSSQL
+                                    if mssql_config:
+                                        _insert_to_mssql_consums_dia(contador_id, fecha_ultimo_dia, c.valor, mssql_config)
+                                    
                                 except Exception as e_dia:
                                     logger.error(
                                         "  ❌ Error insertando en consums_dia para Id='%s': %s",
@@ -439,12 +528,20 @@ def save_consumptions(
                     contador_id = _get_contador_id_from_id_bcentral(id_consorciat, config)
                     if contador_id:
                         try:
+                            # Usar último día del mes para consums_dia
+                            fecha_ultimo_dia = _get_last_day_of_month(c.fecha)
                             cur.execute(_INSERT_CONSUMS_DIA, {
                                 "id":     contador_id,
-                                "data":   c.fecha,
+                                "data":   fecha_ultimo_dia,
                                 "consum": int(c.valor),
                             })
-                            logger.info("  ✅ Consumo insertado también en consums_dia (Id='%s')", contador_id)
+                            logger.info("  ✅ Consumo insertado también en consums_dia (Id='%s', fecha=%s)", 
+                                       contador_id, fecha_ultimo_dia.strftime("%Y-%m-%d"))
+                            
+                            # Inserción en MSSQL
+                            if mssql_config:
+                                _insert_to_mssql_consums_dia(contador_id, fecha_ultimo_dia, c.valor, mssql_config)
+                            
                         except Exception as e_dia:
                             logger.error(
                                 "  ❌ Error insertando en consums_dia para Id='%s': %s",

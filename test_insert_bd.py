@@ -47,7 +47,8 @@ def main():
         inserted, not_found = save_consumptions(
             test_consumptions,
             config.db,
-            cache
+            cache,
+            config.mssql
         )
         
         logger.info("\n" + "=" * 80)

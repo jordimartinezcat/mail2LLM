@@ -13,6 +13,9 @@ msal>=1.30.0
 # Fase 3 (base de datos PostgreSQL):
 psycopg2-binary>=2.9.9
 
+# Fase 4 (base de datos MSSQL/SQL Server):
+pyodbc>=5.0.0
+
 # Procesamiento de PDFs adjuntos:
 pypdf>=4.0.0
 

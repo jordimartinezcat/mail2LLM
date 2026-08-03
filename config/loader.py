@@ -55,11 +55,23 @@ class DBConfig:
     client_encoding: str = "LATIN1"     # encoding del servidor PostgreSQL (LATIN1, UTF8, WIN1252...)
 
 @dataclass
+class MSSQLConfig:
+    enabled: bool
+    host: str
+    port: int
+    database: str
+    use_windows_auth: bool
+    username: str = ""
+    password: str = ""
+    table: str = "dbo.Consums_dia"  # Tabla de destino
+
+@dataclass
 class AppConfig:
     email: EmailConfig
     llm: LLMConfig
     notifications: NotificationConfig
     db: DBConfig
+    mssql: MSSQLConfig
 
 
 def load_config(config_path: str | None = None) -> AppConfig:
@@ -169,7 +181,29 @@ def load_config(config_path: str | None = None) -> AppConfig:
             password="",
         )
 
-    return AppConfig(email=email_config, llm=llm_config, notifications=notifications, db=db_config)
+    # --- MSSQL ----------------------------------------------------------------
+    mssql_elem = root.find("mssql")
+    if mssql_elem is not None:
+        mssql_config = MSSQLConfig(
+            enabled=(mssql_elem.findtext("enabled") or "false").strip().lower() == "true",
+            host=(mssql_elem.findtext("host") or "localhost").strip(),
+            port=int(mssql_elem.findtext("port") or "1433"),
+            database=_require(mssql_elem, "database", "mssql/database") if (mssql_elem.findtext("enabled") or "").strip().lower() == "true" else (mssql_elem.findtext("database") or "").strip(),
+            use_windows_auth=(mssql_elem.findtext("use_windows_auth") or "false").strip().lower() == "true",
+            username=(mssql_elem.findtext("username") or "").strip(),
+            password=(mssql_elem.findtext("password") or "").strip(),
+            table=(mssql_elem.findtext("table") or "dbo.Consums_dia").strip(),
+        )
+    else:
+        mssql_config = MSSQLConfig(
+            enabled=False,
+            host="localhost",
+            port=1433,
+            database="",
+            use_windows_auth=True,
+        )
+
+    return AppConfig(email=email_config, llm=llm_config, notifications=notifications, db=db_config, mssql=mssql_config)
 
 
 def _require(element: ET.Element, tag: str, full_path: str) -> str:

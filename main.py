@@ -381,7 +381,7 @@ def main() -> None:
                     if config.db.enabled and consumptions_to_insert:
                         try:
                             _, db_not_found = save_consumptions(
-                                consumptions_to_insert, config.db, consorciat_cache
+                                consumptions_to_insert, config.db, consorciat_cache, config.mssql
                             )
                         except Exception as db_exc:  # noqa: BLE001
                             logger.error(
