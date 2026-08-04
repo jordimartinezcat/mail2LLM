@@ -258,10 +258,14 @@ def _get_contador_id_from_id_bcentral(id_bcentral: str, config: DBConfig) -> str
             logger.debug("id_bcentral '%s' → IdGC=%s", id_bcentral, idgc)
             
             # 2. Buscar contador en ite_comptadors
+            # Priorizar contadores sin sufijos numéricos (CAR antes que CAR2)
             query_comptador = f"""
                 SELECT "Id"
                 FROM {_TABLE_COMPTADORS}
                 WHERE "IdGC" = %s
+                ORDER BY 
+                    CASE WHEN "Id" ~ '[0-9]$' THEN 1 ELSE 0 END,  -- Sin número primero
+                    "Id"
                 LIMIT 1
             """
             cur.execute(query_comptador, (idgc,))
@@ -381,8 +385,13 @@ def save_consumptions(
                             contador_id = _get_contador_id_from_id_bcentral(c.id_bcentral, config)
                             if contador_id:
                                 try:
+                                    # Convertir fecha string a datetime si es necesario
+                                    if isinstance(c.fecha, str):
+                                        fecha_dt = datetime.fromisoformat(c.fecha.replace('Z', '+00:00'))
+                                    else:
+                                        fecha_dt = c.fecha
                                     # Usar último día del mes para consums_dia
-                                    fecha_ultimo_dia = _get_last_day_of_month(c.fecha)
+                                    fecha_ultimo_dia = _get_last_day_of_month(fecha_dt)
                                     cur.execute(_INSERT_CONSUMS_DIA, {
                                         "id":     contador_id,
                                         "data":   fecha_ultimo_dia,
@@ -528,8 +537,13 @@ def save_consumptions(
                     contador_id = _get_contador_id_from_id_bcentral(id_consorciat, config)
                     if contador_id:
                         try:
+                            # Convertir fecha string a datetime si es necesario
+                            if isinstance(c.fecha, str):
+                                fecha_dt = datetime.fromisoformat(c.fecha.replace('Z', '+00:00'))
+                            else:
+                                fecha_dt = c.fecha
                             # Usar último día del mes para consums_dia
-                            fecha_ultimo_dia = _get_last_day_of_month(c.fecha)
+                            fecha_ultimo_dia = _get_last_day_of_month(fecha_dt)
                             cur.execute(_INSERT_CONSUMS_DIA, {
                                 "id":     contador_id,
                                 "data":   fecha_ultimo_dia,
