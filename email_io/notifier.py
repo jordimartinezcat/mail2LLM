@@ -214,11 +214,10 @@ def send_confirmation_request(
         logger: Logger
     """
     nc = config.notifications
-    if not nc.enabled:
-        logger.warning("No es pot enviar confirmació: notificacions deshabilitades")
-        return
+    # ✅ CORRECCIÓN: Las confirmaciones son parte del flujo normal, no dependen de nc.enabled
+    # nc.enabled solo afecta a notificaciones de ERROR (send_error_notification)
     if not nc.to_addrs:
-        logger.warning("No es pot enviar confirmació: sense destinataris configurats")
+        logger.warning("No es pot enviar confirmació: sense destinataris configurats (<to>)")
         return
     
     # ── Obtenir noms dels tags des de la BD ────────────────────────────────────
