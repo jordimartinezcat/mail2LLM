@@ -224,6 +224,37 @@ def _get_idtag_from_consorciat(id_consorciat: str, config: DBConfig) -> int | No
             return idtag
 
 
+def _get_contador_id_from_idtag(idtag: int, config: DBConfig) -> str | None:
+    """
+    Dado un idTag, busca el Id del contador (tagOld) en ite_consums_tags.
+    
+    Args:
+        idtag: idTag de la señal (ej: 20531)
+        config: Configuración de BD
+        
+    Returns:
+        Id del contador (ej: 'CAR') o None si no se encuentra
+    """
+    with _connect(config) as conn:
+        with conn.cursor() as cur:
+            query = f"""
+                SELECT "tagOld"
+                FROM {_TABLE_TAGS}
+                WHERE "idTag" = %s
+                LIMIT 1
+            """
+            cur.execute(query, (idtag,))
+            row = cur.fetchone()
+            
+            if not row or not row[0]:
+                logger.debug("No se encontró tagOld para idTag=%s", idtag)
+                return None
+            
+            contador_id = row[0]
+            logger.debug("idTag %s → tagOld='%s'", idtag, contador_id)
+            return contador_id
+
+
 def _get_contador_id_from_id_bcentral(id_bcentral: str, config: DBConfig) -> str | None:
     """
     Dado un id_bcentral (ej: CL00068), busca el Id del contador correspondiente para insertar en consums_dia.
@@ -258,14 +289,10 @@ def _get_contador_id_from_id_bcentral(id_bcentral: str, config: DBConfig) -> str
             logger.debug("id_bcentral '%s' → IdGC=%s", id_bcentral, idgc)
             
             # 2. Buscar contador en ite_comptadors
-            # Priorizar contadores sin sufijos numéricos (CAR antes que CAR2)
             query_comptador = f"""
                 SELECT "Id"
                 FROM {_TABLE_COMPTADORS}
                 WHERE "IdGC" = %s
-                ORDER BY 
-                    CASE WHEN "Id" ~ '[0-9]$' THEN 1 ELSE 0 END,  -- Sin número primero
-                    "Id"
                 LIMIT 1
             """
             cur.execute(query_comptador, (idgc,))
@@ -381,41 +408,44 @@ def save_consumptions(
                         # ══════════════════════════════════════════════════════════════
                         # INSERCIÓN ADICIONAL en ga_landing.consums_dia
                         # ══════════════════════════════════════════════════════════════
-                        if hasattr(c, 'id_bcentral') and c.id_bcentral:
+                        # Usar tagOld de ite_consums_tags cuando tenemos idTag directo
+                        contador_id = _get_contador_id_from_idtag(idtag, config)
+                        
+                        # Fallback: si no hay tagOld pero tenemos id_bcentral
+                        if not contador_id and hasattr(c, 'id_bcentral') and c.id_bcentral:
                             contador_id = _get_contador_id_from_id_bcentral(c.id_bcentral, config)
-                            if contador_id:
-                                try:
-                                    # Convertir fecha string a datetime si es necesario
-                                    if isinstance(c.fecha, str):
-                                        fecha_dt = datetime.fromisoformat(c.fecha.replace('Z', '+00:00'))
-                                    else:
-                                        fecha_dt = c.fecha
-                                    # Usar último día del mes para consums_dia
-                                    fecha_ultimo_dia = _get_last_day_of_month(fecha_dt)
-                                    cur.execute(_INSERT_CONSUMS_DIA, {
-                                        "id":     contador_id,
-                                        "data":   fecha_ultimo_dia,
-                                        "consum": int(c.valor),
-                                    })
-                                    logger.info("  ✅ Consumo insertado también en consums_dia (Id='%s', fecha=%s)", 
-                                               contador_id, fecha_ultimo_dia.strftime("%Y-%m-%d"))
-                                    
-                                    # Inserción en MSSQL
-                                    if mssql_config:
-                                        _insert_to_mssql_consums_dia(contador_id, fecha_ultimo_dia, c.valor, mssql_config)
-                                    
-                                except Exception as e_dia:
-                                    logger.error(
-                                        "  ❌ Error insertando en consums_dia para Id='%s': %s",
-                                        contador_id, str(e_dia)
-                                    )
-                            else:
-                                logger.warning(
-                                    "  ⚠️  No se pudo obtener Id del contador para id_bcentral='%s' — sin inserción en consums_dia",
-                                    c.id_bcentral
+                        
+                        if contador_id:
+                            try:
+                                # Convertir fecha string a datetime si es necesario
+                                if isinstance(c.fecha, str):
+                                    fecha_dt = datetime.fromisoformat(c.fecha.replace('Z', '+00:00'))
+                                else:
+                                    fecha_dt = c.fecha
+                                # Usar último día del mes para consums_dia
+                                fecha_ultimo_dia = _get_last_day_of_month(fecha_dt)
+                                cur.execute(_INSERT_CONSUMS_DIA, {
+                                    "id":     contador_id,
+                                    "data":   fecha_ultimo_dia,
+                                    "consum": int(c.valor),
+                                })
+                                logger.info("  ✅ Consumo insertado también en consums_dia (Id='%s', fecha=%s)", 
+                                           contador_id, fecha_ultimo_dia.strftime("%Y-%m-%d"))
+                                
+                                # Inserción en MSSQL
+                                if mssql_config:
+                                    _insert_to_mssql_consums_dia(contador_id, fecha_ultimo_dia, c.valor, mssql_config)
+                                
+                            except Exception as e_dia:
+                                logger.error(
+                                    "  ❌ Error insertando en consums_dia para Id='%s': %s",
+                                    contador_id, str(e_dia)
                                 )
                         else:
-                            logger.debug("  ℹ️  Sin id_bcentral — sin inserción en consums_dia")
+                            logger.warning(
+                                "  ⚠️  No se pudo obtener Id del contador (idTag=%s) — sin inserción en consums_dia",
+                                idtag
+                            )
                         
                     except Exception as e:
                         logger.error(
