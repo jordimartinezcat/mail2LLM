@@ -288,20 +288,29 @@ def main() -> None:
                     
                     logger.debug("Analizando confirmación - Primeras líneas: %s", first_lines[:200])
                     
-                    # Buscar patró: "CONFIRMAR 1,3,5" o "1,2" o "1 2 3"
-                    # Primero buscar "CONFIRMAR" seguido de números
-                    match = re.search(r'CONFIRMAR\s+([\d,\s]+?)(?:\s|$)', text)
+                    # PASO 1: Buscar números selectivos (con cualquier palabra clave o solos)
+                    # Patrones: "OK 1,2,3" | "CONFIRMAR 1,3,5" | "1,2,3"
+                    match = None
+                    
+                    # Buscar (OK|CONFIRMAR|ACEPTAR|SI|SÍ) seguido de números
+                    match = re.search(r'(?:OK|CONFIRMAR|ACEPTAR|SI|SÍ)\s+([\d,\s]+?)(?:\s|$)', text)
                     if match:
-                        logger.debug("Match encontrado con 'CONFIRMAR': %s", match.group(1))
+                        logger.debug("Match encontrado con palabra clave + números: %s", match.group(1))
                     
                     if not match:
-                        # Si no hay "CONFIRMAR", buscar línea que comience con números y comas
-                        # Más flexible: acepta línea que empiece con dígitos
+                        # Buscar solo "CONFIRMAR" seguido de números
+                        match = re.search(r'CONFIRMAR\s+([\d,\s]+?)(?:\s|$)', text)
+                        if match:
+                            logger.debug("Match encontrado con 'CONFIRMAR': %s", match.group(1))
+                    
+                    if not match:
+                        # Si no hay palabra clave, buscar línea que comience con números y comas
                         match = re.search(r'^\s*([\d,\s]+?)\s*$', first_lines, re.MULTILINE)
                         if match:
                             logger.debug("Match encontrado (solo números): %s", match.group(1))
                     
-                    if match and "TOTS" not in text and "TODOS" not in text and "OK" not in text:
+                    # PASO 2: Procesar números encontrados
+                    if match:
                         # Extreure números (separats per comes o espais)
                         numbers_str = match.group(1).replace(" ", ",").strip(",")
                         try:
@@ -309,13 +318,16 @@ def main() -> None:
                             if line_numbers:  # Solo si hay números válidos
                                 logger.info("Confirmació SELECTIVA: línies %s", line_numbers)
                             else:
-                                logger.warning("Números extrets però buits, assumint confirmació total")
+                                logger.debug("Números extrets però buits, buscant confirmació total")
                         except ValueError:
-                            logger.warning("Format de números invàlid: %s, assumint confirmació total", numbers_str)
+                            logger.debug("Format de números invàlid: %s, buscant confirmació total", numbers_str)
                     
+                    # PASO 3: Si no hay números, buscar confirmación total por palabras clave
                     if not line_numbers:
-                        if "TOTS" in text or "TODOS" in text or "OK" in text or "SÍ" in text or "SI" in text or "ACEPTAR" in text:
-                            logger.info("Confirmació TOTAL (paraula clau detectada)")
+                        if "TOTS" in text or "TODOS" in text:
+                            logger.info("Confirmació TOTAL (paraula 'TOTS/TODOS')")
+                        elif "OK" in text or "CONFIRMAR" in text or "SÍ" in text or "SI" in text or "ACEPTAR" in text:
+                            logger.info("Confirmació TOTAL (paraula clau detectada sense números)")
                         else:
                             logger.warning("No s'ha detectat confirmació selectiva ni total clara - assumint TOTAL per defecte")
                     
