@@ -107,61 +107,19 @@ class Consumption:
         }
 
 
-def extract_consumption(
-    body: str, 
-    config: LLMConfig, 
-    email_date: str = "",
-    pdf_contents: list[str] | None = None,
-    companies: list[tuple[str, str]] | None = None,
-    sender: str = "",
-    subject: str = ""
-) -> list["Consumption"] | None:
+def _call_llm(content: str, config: LLMConfig) -> list["Consumption"] | None:
     """
-    Envía el cuerpo del correo y contenido de PDFs adjuntos al LLM y extrae los datos de consumo.
+    Función interna para llamar al LLM con un contenido específico.
     
     Args:
-        body: Cuerpo del email en texto plano
+        content: Contenido a procesar (body o body+PDFs)
         config: Configuración del LLM
-        email_date: Cabecera Date: del correo (RFC 2822), usada para calcular la fecha de referencia
-        pdf_contents: Lista de contenidos de PDFs adjuntos extraídos
-        companies: Lista de (id, nombre) de empresas registradas para ayudar al LLM
-        sender: Remitente del email (para ayudar a identificar la empresa)
-        subject: Asunto del email (para ayudar a identificar la empresa)
     
     Returns:
-        Lista de Consumption (puede ser vacía), o None si hay error
+        Lista de Consumption o None si hay error
     """
-    ref_date, ref_year = _compute_ref(email_date)
+    prompt = _PROMPT_TEMPLATE.format(body=content)
     
-    # Combinar cuerpo del email con contenido de PDFs
-    combined_content = body.strip()
-    if pdf_contents:
-        combined_content += "\n\n" + "\n\n═══════════════════════════════════\n\n".join(pdf_contents)
-    
-    # 🔍 DEBUG: Log del HTML COMPLETO enviado al LLM
-    logger.info("="*80)
-    logger.info("🔍 HTML COMPLETO ENVIADO AL LLM:")
-    logger.info("="*80)
-    logger.info("%s", combined_content)
-    logger.info("="*80)
-    logger.info("🔍 FIN HTML - Longitud total: %d caracteres", len(combined_content))
-    logger.info("="*80)
-    
-    # Formatear lista de empresas para el prompt (limitar a primeras 50 para no saturar)
-    companies_text = "No company list provided."
-    if companies:
-        companies_sample = companies[:50]  # Primeras 50 empresas
-        companies_lines = [f"- {nombre} (ID: {id_})" for id_, nombre in companies_sample]
-        if len(companies) > 50:
-            companies_lines.append(f"... and {len(companies) - 50} more companies")
-        companies_text = "\n".join(companies_lines)
-    
-    prompt = _PROMPT_TEMPLATE.format(body=combined_content)
-    
-    # Log: verificar contexto enviado al LLM
-    logger.info("  Contexto enviado al LLM → From: %s | Subject: %s", 
-                sender or "Unknown", subject or "No subject")
-
     _RESPONSE_SCHEMA = {
         "type": "array",
         "items": {
@@ -202,20 +160,17 @@ def extract_consumption(
     if is_azure:
         url = f"{config.endpoint}/chat/completions?api-version={config.api_version}"
         headers = {"api-key": config.api_key, "Content-Type": "application/json"}
-        # Los modelos de razonamiento (o1, o3, o4-mini) no aceptan temperature/top_p
-        # y usan max_completion_tokens en lugar de max_tokens
         payload.pop("model", None)
         payload.pop("chat_template_kwargs", None)
         payload.pop("temperature", None)
         payload.pop("top_p", None)
-        payload.pop("max_tokens", None)  # Azure o4-mini: sin límite de tokens de salida
-        payload.pop("response_format", None)  # Azure usa su propia API de structured output
+        payload.pop("max_tokens", None)
+        payload.pop("response_format", None)
     elif is_huggingface:
         url = f"{config.endpoint}/v1/chat/completions"
         headers = {"Authorization": f"Bearer {config.api_key}", "Content-Type": "application/json"}
-        # HF Inference API no acepta parámetros específicos de Ollama
         payload.pop("chat_template_kwargs", None)
-        payload.pop("response_format", None)  # HF no garantiza soporte de json_schema
+        payload.pop("response_format", None)
     else:
         url = f"{config.endpoint}/v1/chat/completions"
         headers = {"Content-Type": "application/json"}
@@ -247,7 +202,7 @@ def extract_consumption(
     full_response = response.json()
     message = full_response["choices"][0]["message"]
     raw_content = message.get("content", "").strip()
-
+    
     if not raw_content:
         raw_content = message.get("reasoning_content", "").strip()
 
@@ -259,10 +214,84 @@ def extract_consumption(
     logger.debug("Respuesta LLM raw: %s", raw_content)
 
     consumptions = _parse_response(raw_content)
+    return consumptions
 
-    # Fallback Python: si el LLM devuelve fecha=null, aplicar la fecha de referencia
-    if consumptions:
-        for c in consumptions:
+
+def extract_consumption(
+    body: str, 
+    config: LLMConfig, 
+    email_date: str = "",
+    pdf_contents: list[str] | None = None,
+    companies: list[tuple[str, str]] | None = None,
+    sender: str = "",
+    subject: str = ""
+) -> list["Consumption"] | None:
+    """
+    Envía el cuerpo del correo (y PDFs si es necesario) al LLM para extraer consumos.
+    
+    ESTRATEGIA DE PROCESAMIENTO:
+    1. Procesar SOLO el cuerpo del email primero
+    2. Si encuentra consumos → terminar (no procesar PDFs)
+    3. Si NO encuentra consumos Y hay PDFs → procesar body + PDFs
+    
+    Esto optimiza el uso de tokens y evita errores 429 (Too Many Requests).
+    
+    Args:
+        body: Cuerpo del email en texto plano o HTML
+        config: Configuración del LLM
+        email_date: Cabecera Date: del correo (RFC 2822)
+        pdf_contents: Lista de contenidos de PDFs adjuntos
+        companies: Lista de (id, nombre) de empresas (no usado actualmente)
+        sender: Remitente del email
+        subject: Asunto del email
+    
+    Returns:
+        Lista de Consumption (puede ser vacía), o None si hay error
+    """
+    ref_date, ref_year = _compute_ref(email_date)
+    
+    # Log contexto
+    logger.info("  Contexto → From: %s | Subject: %s", 
+                sender or "Unknown", subject or "No subject")
+    
+    # ═══════════════════════════════════════════════════════════════════
+    # PASO 1: Procesar SOLO el cuerpo del email
+    # ═══════════════════════════════════════════════════════════════════
+    body_content = body.strip()
+    
+    logger.info("="*80)
+    logger.info("🔍 PASO 1/2: Procesando SOLO el cuerpo del email")
+    logger.info("="*80)
+    logger.info("Longitud: %d caracteres", len(body_content))
+    logger.info("="*80)
+    
+    consumptions = _call_llm(body_content, config)
+    
+    if consumptions and len(consumptions) > 0:
+        logger.info("✅ Consumos encontrados en el cuerpo (%d) - NO se procesarán PDFs", len(consumptions))
+    elif pdf_contents and len(pdf_contents) > 0:
+        # ═══════════════════════════════════════════════════════════════════
+        # PASO 2: Si no hay consumos en body, procesar con PDFs
+        # ═══════════════════════════════════════════════════════════════════
+        logger.info("⚠️  No se encontraron consumos en el cuerpo")
+        logger.info("="*80)
+        logger.info("🔍 PASO 2/2: Procesando cuerpo + %d PDF(s) adjunto(s)", len(pdf_contents))
+        logger.info("="*80)
+        
+        combined_content = body_content + "\n\n" + "\n\n═══════════════════════════════════\n\n".join(pdf_contents)
+        logger.info("Longitud total: %d caracteres", len(combined_content))
+        logger.info("="*80)
+        
+        consumptions = _call_llm(combined_content, config)
+        
+        if consumptions and len(consumptions) > 0:
+            logger.info("✅ Consumos encontrados en PDF(s) (%d)", len(consumptions))
+        else:
+            logger.warning("⚠️  No se encontraron consumos ni en cuerpo ni en PDF(s)")
+    else:
+        logger.info("ℹ️  Sin PDFs adjuntos para procesar")
+    
+    # Aplicar fecha de referencia si el LLM devuelve fecha=null
             if c.fecha is None:
                 logger.info(
                     "  Data no indicada al correu — s'assigna data de referència: %s (empresa=%s)",
