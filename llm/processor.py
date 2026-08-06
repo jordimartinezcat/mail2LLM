@@ -292,6 +292,8 @@ def extract_consumption(
         logger.info("ℹ️  Sin PDFs adjuntos para procesar")
     
     # Aplicar fecha de referencia si el LLM devuelve fecha=null
+    if consumptions:
+        for c in consumptions:
             if c.fecha is None:
                 logger.info(
                     "  Data no indicada al correu — s'assigna data de referència: %s (empresa=%s)",
