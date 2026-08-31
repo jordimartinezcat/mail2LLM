@@ -38,7 +38,8 @@ class NotificationConfig:
     smtp_user: str
     smtp_password: str
     from_addr: str
-    to_addrs: list
+    to_addrs: list  # Destinatarios de notificaciones de ERROR
+    to_confirmations_addrs: list  # Destinatarios de confirmaciones de CONSUMOS
     include_original_senders: list  # Lista de correos que se incluyen en CC si son remitentes originales
 
 
@@ -130,6 +131,10 @@ def load_config(config_path: str | None = None) -> AppConfig:
         to_text = (notif_elem.findtext("to") or "").strip()
         to_addrs = [a.strip() for a in to_text.split(",") if a.strip()]
         
+        # Destinatarios para confirmaciones (si no existe, usa los mismos que 'to')
+        to_confirmations_text = (notif_elem.findtext("to_confirmations") or to_text).strip()
+        to_confirmations_addrs = [a.strip() for a in to_confirmations_text.split(",") if a.strip()]
+        
         include_senders_text = (notif_elem.findtext("include_original_senders") or "").strip()
         include_original_senders = [a.strip() for a in include_senders_text.split(",") if a.strip()]
         
@@ -142,6 +147,7 @@ def load_config(config_path: str | None = None) -> AppConfig:
             smtp_password=(notif_elem.findtext("smtp_password") or "").strip(),
             from_addr=(notif_elem.findtext("from") or "").strip(),
             to_addrs=to_addrs,
+            to_confirmations_addrs=to_confirmations_addrs,
             include_original_senders=include_original_senders,
         )
     else:
@@ -154,6 +160,7 @@ def load_config(config_path: str | None = None) -> AppConfig:
             smtp_password="",
             from_addr="",
             to_addrs=[],
+            to_confirmations_addrs=[],
             include_original_senders=[],
         )
 

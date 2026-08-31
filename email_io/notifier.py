@@ -216,8 +216,8 @@ def send_confirmation_request(
     nc = config.notifications
     # ✅ CORRECCIÓN: Las confirmaciones son parte del flujo normal, no dependen de nc.enabled
     # nc.enabled solo afecta a notificaciones de ERROR (send_error_notification)
-    if not nc.to_addrs:
-        logger.warning("No es pot enviar confirmació: sense destinataris configurats (<to>)")
+    if not nc.to_confirmations_addrs:
+        logger.warning("No es pot enviar confirmació: sense destinataris configurats (<to_confirmations>)")
         return
     
     # ── Obtenir noms dels tags des de la BD ────────────────────────────────────
@@ -389,7 +389,7 @@ Per REBUTJAR, simplement ignora aquest missatge.
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"[CONFIRMACIÓ #{uid}] Consums: {original_subject}"
     msg["From"] = nc.from_addr
-    msg["To"] = ", ".join(nc.to_addrs)
+    msg["To"] = ", ".join(nc.to_confirmations_addrs)
     
     # Incluir remitente original en CC si está configurado
     cc_addrs = []
@@ -406,12 +406,12 @@ Per REBUTJAR, simplement ignora aquest missatge.
     # ── Enviar ────────────────────────────────────────────────────────────────
     try:
         with _smtp_connect(nc, config.email, logger) as smtp:
-            all_recipients = nc.to_addrs + cc_addrs
+            all_recipients = nc.to_confirmations_addrs + cc_addrs
             smtp.sendmail(nc.from_addr, all_recipients, msg.as_string())
         
         logger.info(
             "Sol·licitud de confirmació HTML enviada a: %s (UID: %s, %d consum(s))",
-            ", ".join(nc.to_addrs),
+            ", ".join(nc.to_confirmations_addrs),
             uid,
             len(consumptions),
         )

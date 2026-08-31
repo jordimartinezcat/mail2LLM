@@ -81,8 +81,17 @@
     <smtp_password></smtp_password>  <!-- dejar vacío si usas OAuth2 -->
     <!-- Dirección remitente del correo de notificación -->
     <from>notificaciones@example.com</from>
-    <!-- Lista de destinatarios separados por comas -->
+    <!-- Lista de destinatarios para NOTIFICACIONES DE ERROR (separados por comas) -->
     <to>admin@example.com, responsable@example.com</to>
+    <!-- Lista de destinatarios para CONFIRMACIONES DE CONSUMOS (separados por comas)
+         Si está vacío o no existe, usa los mismos que <to> -->
+    <to_confirmations>admin@example.com, equipo1@example.com, equipo2@example.com</to_confirmations>
+    <!-- Lista de correos que deben incluirse en la respuesta si son el remitente original.
+         Separados por comas. Si el remitente original coincide con alguno de estos,
+         se incluirá en CC al enviar confirmaciones o errores.
+         Ejemplo: user1@empresa.com,user2@empresa.com,yolanda.gutierrez@messergroup.com
+         DESACTIVADO: lista vacía para evitar enviar a remitentes originales -->
+    <include_original_senders></include_original_senders>
   </notifications>
 
   <!-- ══════════════════════════════════════════════════════════════════════ -->
