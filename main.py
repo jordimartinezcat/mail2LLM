@@ -1,3 +1,4 @@
+import html
 import re
 import sys
 
@@ -186,6 +187,77 @@ def _extract_confirmation_uid(body: str, raw: str = "", subject: str = "") -> st
     return None
 
 
+def _extract_confirmation_reply_text(body: str) -> str:
+    """Aísla el texto de respuesta del usuario antes del contenido citado."""
+    if not body:
+        return ""
+
+    text = html.unescape(body).replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r'<style[^>]*>.*?</style>', ' ', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<script[^>]*>.*?</script>', ' ', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', ' ', text)
+
+    quote_markers = [
+        r'^>+',
+        r'^DE:\s+',
+        r'^FROM:\s+',
+        r'^ENVIADO EL:\s+',
+        r'^SENT:\s+',
+        r'^ON .+ WROTE:$',
+        r'^-{2,}\s*ORIGINAL MESSAGE\s*-{2,}$',
+        r'^\[CONFIRMACI[ÓO]\s+#\d+\]',
+        r'^\(ID DE CONFIRMACI[ÓO]:\s*\d+\)',
+    ]
+
+    reply_lines: list[str] = []
+    for raw_line in text.split("\n"):
+        line = re.sub(r'\s+', ' ', raw_line).strip()
+        if not line:
+            if reply_lines:
+                break
+            continue
+
+        upper_line = line.upper()
+        if any(re.match(pattern, upper_line, re.IGNORECASE) for pattern in quote_markers):
+            break
+
+        if any(token in upper_line for token in ("MSONORMAL", "FONT-FAMILY:", "HTTPS://AKA.MS/", "OUTLOOK PER A L'ANDROID", "GET OUTLOOK FOR")):
+            continue
+
+        reply_lines.append(line)
+        if len(reply_lines) >= 5:
+            break
+
+    return "\n".join(reply_lines)
+
+
+def _extract_confirmation_line_numbers(reply_text: str) -> list[int] | None:
+    """Extrae números de línea solo del texto de respuesta del usuario."""
+    if not reply_text:
+        return None
+
+    def _parse_numbers(value: str) -> list[int]:
+        normalized = re.sub(r'\s+', ',', value).strip(',')
+        return [int(n) for n in normalized.split(',') if n.isdigit()]
+
+    for raw_line in reply_text.split("\n"):
+        line = raw_line.strip().upper()
+        if not line:
+            continue
+
+        match = re.fullmatch(r'(?:OK|CONFIRMAR|ACEPTAR|SI|SÍ|CONFIRMO|ACEPTO)\s+([\d,\s]+)', line)
+        if match:
+            numbers = _parse_numbers(match.group(1))
+            return numbers or None
+
+        match = re.fullmatch(r'([\d,\s]+)', line)
+        if match:
+            numbers = _parse_numbers(match.group(1))
+            return numbers or None
+
+    return None
+
+
 def main() -> None:
     logger = setup_logger()
     logger.info("=" * 60)
@@ -279,54 +351,18 @@ def main() -> None:
                         errors += 1
                         continue
                     
-                    # Detectar si és confirmació selectiva (CONFIRMAR 1,3,5) o total (TOTS)
-                    # Buscar solo en las primeras líneas del body (antes del texto citado)
-                    body_lines = msg["body"].split("\n")
-                    first_lines = "\n".join(body_lines[:10]).upper()  # Primeras 10 líneas
-                    text = first_lines + " " + (msg["subject"] or "").upper()
-                    line_numbers = None
-                    
-                    logger.debug("Analizando confirmación - Primeras líneas: %s", first_lines[:200])
-                    
-                    # PASO 1: Buscar números selectivos (con cualquier palabra clave o solos)
-                    # Patrones: "OK 1,2,3" | "CONFIRMAR 1,3,5" | "1,2,3"
-                    match = None
-                    
-                    # Buscar (OK|CONFIRMAR|ACEPTAR|SI|SÍ) seguido de números
-                    match = re.search(r'(?:OK|CONFIRMAR|ACEPTAR|SI|SÍ)\s+([\d,\s]+?)(?:\s|$)', text)
-                    if match:
-                        logger.debug("Match encontrado con palabra clave + números: %s", match.group(1))
-                    
-                    if not match:
-                        # Buscar solo "CONFIRMAR" seguido de números
-                        match = re.search(r'CONFIRMAR\s+([\d,\s]+?)(?:\s|$)', text)
-                        if match:
-                            logger.debug("Match encontrado con 'CONFIRMAR': %s", match.group(1))
-                    
-                    if not match:
-                        # Si no hay palabra clave, buscar línea que comience con números y comas
-                        match = re.search(r'^\s*([\d,\s]+?)\s*$', first_lines, re.MULTILINE)
-                        if match:
-                            logger.debug("Match encontrado (solo números): %s", match.group(1))
-                    
-                    # PASO 2: Procesar números encontrados
-                    if match:
-                        # Extreure números (separats per comes o espais)
-                        numbers_str = match.group(1).replace(" ", ",").strip(",")
-                        try:
-                            line_numbers = [int(n.strip()) for n in numbers_str.split(",") if n.strip() and n.strip().isdigit()]
-                            if line_numbers:  # Solo si hay números válidos
-                                logger.info("Confirmació SELECTIVA: línies %s", line_numbers)
-                            else:
-                                logger.debug("Números extrets però buits, buscant confirmació total")
-                        except ValueError:
-                            logger.debug("Format de números invàlid: %s, buscant confirmació total", numbers_str)
-                    
-                    # PASO 3: Si no hay números, buscar confirmación total por palabras clave
-                    if not line_numbers:
-                        if "TOTS" in text or "TODOS" in text:
+                    reply_text = _extract_confirmation_reply_text(msg["body"])
+                    line_numbers = _extract_confirmation_line_numbers(reply_text)
+                    confirmation_text = reply_text.upper()
+
+                    logger.debug("Analizando confirmación - Respuesta detectada: %s", reply_text[:200])
+
+                    if line_numbers:
+                        logger.info("Confirmació SELECTIVA: línies %s", line_numbers)
+                    else:
+                        if any(keyword in confirmation_text for keyword in ("TOTS", "TODOS")):
                             logger.info("Confirmació TOTAL (paraula 'TOTS/TODOS')")
-                        elif "OK" in text or "CONFIRMAR" in text or "SÍ" in text or "SI" in text or "ACEPTAR" in text:
+                        elif any(keyword in confirmation_text for keyword in ("OK", "CONFIRMAR", "SÍ", "SI", "ACEPTAR", "CONFIRMO", "ACEPTO")):
                             logger.info("Confirmació TOTAL (paraula clau detectada sense números)")
                         else:
                             logger.warning("No s'ha detectat confirmació selectiva ni total clara - assumint TOTAL per defecte")
