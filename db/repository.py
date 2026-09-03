@@ -6,6 +6,7 @@ import calendar
 
 import psycopg2
 import pyodbc
+from psycopg2 import errors
 
 from config.loader import DBConfig, MSSQLConfig
 
@@ -238,21 +239,52 @@ def _get_contador_id_from_idtag(idtag: int, config: DBConfig) -> str | None:
     with _connect(config) as conn:
         with conn.cursor() as cur:
             query = f"""
-                SELECT "tagOld"
+                SELECT "tagOld", tag
                 FROM {_TABLE_TAGS}
                 WHERE "idTag" = %s
                 LIMIT 1
             """
             cur.execute(query, (idtag,))
             row = cur.fetchone()
-            
-            if not row or not row[0]:
-                logger.debug("No se encontró tagOld para idTag=%s", idtag)
+
+            if not row:
+                logger.debug("No se encontró idTag=%s en ite_consums_tags", idtag)
                 return None
-            
-            contador_id = row[0]
-            logger.debug("idTag %s → tagOld='%s'", idtag, contador_id)
-            return contador_id
+
+            tag_old = row[0]
+            tag_name = row[1]
+
+            # Prioridad 1: usar tagOld si está informado
+            if tag_old:
+                contador_id = str(tag_old).strip()
+                if contador_id:
+                    logger.debug("idTag %s → tagOld='%s'", idtag, contador_id)
+                    return contador_id
+
+            # Prioridad 2: derivar IdMaximo desde tag (ej. LTC01_FTR_V01_CSM -> LTC01FTRV01)
+            if tag_name:
+                tag_clean = str(tag_name).strip().upper()
+                if tag_clean.endswith("_CSM"):
+                    id_maximo = tag_clean[:-4].replace("_", "")
+                    query_comptador = f"""
+                        SELECT "Id"
+                        FROM {_TABLE_COMPTADORS}
+                        WHERE "IdMaximo" = %s
+                          AND "Baixa" IS NULL
+                        LIMIT 1
+                    """
+                    cur.execute(query_comptador, (id_maximo,))
+                    row_comptador = cur.fetchone()
+                    if row_comptador and row_comptador[0]:
+                        contador_id = row_comptador[0]
+                        logger.debug(
+                            "idTag %s → tag='%s' → IdMaximo='%s' → contador Id='%s'",
+                            idtag, tag_clean, id_maximo, contador_id,
+                        )
+                        return contador_id
+
+            logger.debug("No se pudo mapear contador para idTag=%s (tagOld vacío y sin coincidencia por tag)", idtag)
+            return None
 
 
 def _get_contador_id_from_id_bcentral(id_bcentral: str, config: DBConfig) -> str | None:
@@ -277,34 +309,36 @@ def _get_contador_id_from_id_bcentral(id_bcentral: str, config: DBConfig) -> str
             """
             cur.execute(query_consorciat, (id_bcentral,))
             row = cur.fetchone()
-            
+
             if not row:
                 logger.warning(
                     "No se encontró IdGC en ite_consorciat para id_bcentral='%s'",
                     id_bcentral
                 )
                 return None
-            
+
             idgc = row[0]
             logger.debug("id_bcentral '%s' → IdGC=%s", id_bcentral, idgc)
-            
-            # 2. Buscar contador en ite_comptadors
+
+            # 2. Buscar contador en ite_comptadors (activos y con pare)
             query_comptador = f"""
                 SELECT "Id"
                 FROM {_TABLE_COMPTADORS}
                 WHERE "IdGC" = %s
+                  AND "Pare" IS NOT NULL
+                  AND "Baixa" IS NULL
                 LIMIT 1
             """
             cur.execute(query_comptador, (idgc,))
             row = cur.fetchone()
-            
+
             if not row:
                 logger.warning(
                     "No se encontró contador en ite_comptadors para IdGC=%s (id_bcentral '%s')",
                     idgc, id_bcentral
                 )
                 return None
-            
+
             contador_id = row[0]
             logger.debug("Contador encontrado: Id='%s' para IdGC=%s", contador_id, idgc)
             return contador_id
@@ -417,6 +451,7 @@ def save_consumptions(
                         
                         if contador_id:
                             try:
+                                cur.execute("SAVEPOINT sp_consums_dia_direct")
                                 # Convertir fecha string a datetime si es necesario
                                 if isinstance(c.fecha, str):
                                     fecha_dt = datetime.fromisoformat(c.fecha.replace('Z', '+00:00'))
@@ -437,10 +472,22 @@ def save_consumptions(
                                     _insert_to_mssql_consums_dia(contador_id, fecha_ultimo_dia, c.valor, mssql_config)
                                 
                             except Exception as e_dia:
-                                logger.error(
-                                    "  ❌ Error insertando en consums_dia para Id='%s': %s",
-                                    contador_id, str(e_dia)
-                                )
+                                cur.execute("ROLLBACK TO SAVEPOINT sp_consums_dia_direct")
+                                if isinstance(e_dia, errors.UniqueViolation):
+                                    logger.info(
+                                        "  ℹ️  Consumo ya existente en consums_dia (Id='%s', fecha=%s) — se continúa sin error",
+                                        contador_id, fecha_ultimo_dia.strftime("%Y-%m-%d")
+                                    )
+                                else:
+                                    logger.error(
+                                        "  ❌ Error insertando en consums_dia para Id='%s': %s",
+                                        contador_id, str(e_dia)
+                                    )
+                            finally:
+                                try:
+                                    cur.execute("RELEASE SAVEPOINT sp_consums_dia_direct")
+                                except Exception:
+                                    pass
                         else:
                             logger.warning(
                                 "  ⚠️  No se pudo obtener Id del contador (idTag=%s) — sin inserción en consums_dia",
@@ -567,6 +614,7 @@ def save_consumptions(
                     contador_id = _get_contador_id_from_id_bcentral(id_consorciat, config)
                     if contador_id:
                         try:
+                            cur.execute("SAVEPOINT sp_consums_dia_fallback")
                             # Convertir fecha string a datetime si es necesario
                             if isinstance(c.fecha, str):
                                 fecha_dt = datetime.fromisoformat(c.fecha.replace('Z', '+00:00'))
@@ -587,10 +635,22 @@ def save_consumptions(
                                 _insert_to_mssql_consums_dia(contador_id, fecha_ultimo_dia, c.valor, mssql_config)
                             
                         except Exception as e_dia:
-                            logger.error(
-                                "  ❌ Error insertando en consums_dia para Id='%s': %s",
-                                contador_id, str(e_dia)
-                            )
+                            cur.execute("ROLLBACK TO SAVEPOINT sp_consums_dia_fallback")
+                            if isinstance(e_dia, errors.UniqueViolation):
+                                logger.info(
+                                    "  ℹ️  Consumo ya existente en consums_dia (Id='%s', fecha=%s) — se continúa sin error",
+                                    contador_id, fecha_ultimo_dia.strftime("%Y-%m-%d")
+                                )
+                            else:
+                                logger.error(
+                                    "  ❌ Error insertando en consums_dia para Id='%s': %s",
+                                    contador_id, str(e_dia)
+                                )
+                        finally:
+                            try:
+                                cur.execute("RELEASE SAVEPOINT sp_consums_dia_fallback")
+                            except Exception:
+                                pass
                     else:
                         logger.warning(
                             "  ⚠️  No se pudo obtener Id del contador para id_consorciat='%s' — sin inserción en consums_dia",
